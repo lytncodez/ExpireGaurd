@@ -5,9 +5,9 @@ function getRisk(expiryDate: string, nowTimestamp: number): { label: string; bad
   const exp = new Date(expiryDate).getTime();
   const diffDays = Math.floor((exp - nowTimestamp) / (1000 * 60 * 60 * 24));
   if (diffDays < 0) return { label: 'Expired', badgeClass: 'risk-badge--expired' };
-  if (diffDays <= 3) return { label: 'Critical', badgeClass: 'risk-badge--critical' };
-  if (diffDays <= 7) return { label: 'Action Required', badgeClass: 'risk-badge--action' };
-  if (diffDays <= 30) return { label: 'Monitor', badgeClass: 'risk-badge--monitor' };
+  if (diffDays <= 7) return { label: 'Critical', badgeClass: 'risk-badge--critical' };
+  if (diffDays <= 30) return { label: 'Action Required', badgeClass: 'risk-badge--action' };
+  if (diffDays <= 60) return { label: 'Monitor', badgeClass: 'risk-badge--monitor' };
   return { label: 'Safe', badgeClass: 'risk-badge--safe' };
 }
 
@@ -39,6 +39,7 @@ export default function ItemDetail() {
 
   const risk = getRisk(item.expiryDate, nowTimestamp);
   const diffDays = Math.floor((new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
+  const totalValueAtRisk = diffDays <= 30 ? (item.quantity * item.unitPrice) : 0;
 
   const handleDelete = () => {
     if (window.confirm(`Are you sure you want to delete ${item.name}?`)) {
@@ -53,7 +54,7 @@ export default function ItemDetail() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-card)', paddingBottom: '1rem' }}>
           <div>
             <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-              Item Details & Overview
+              Batch &amp; Product Details
             </span>
             <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '0.2rem' }}>
               {item.name}
@@ -69,7 +70,11 @@ export default function ItemDetail() {
           <table className="modern-table">
             <tbody>
               <tr>
-                <td style={{ fontWeight: 600, color: 'var(--text-muted)', width: '35%' }}>Category</td>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)', width: '35%' }}>Batch / Lot Number</td>
+                <td style={{ fontFamily: 'monospace', fontWeight: 700 }}>{item.batchNo}</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Category</td>
                 <td style={{ fontWeight: 600 }}>{item.category}</td>
               </tr>
               <tr>
@@ -77,13 +82,43 @@ export default function ItemDetail() {
                 <td style={{ fontWeight: 700, fontSize: '1.1rem' }}>{item.quantity} units</td>
               </tr>
               <tr>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Unit Price</td>
+                <td style={{ fontWeight: 600 }}>${item.unitPrice.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Stock Value at Risk</td>
+                <td style={{ fontWeight: 700, color: totalValueAtRisk > 0 ? '#7C3AED' : 'var(--text-muted)' }}>
+                  {totalValueAtRisk > 0 ? `$${totalValueAtRisk.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '$0.00 (Safe)'}
+                </td>
+              </tr>
+              <tr>
                 <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Expiry Date</td>
                 <td>{new Date(item.expiryDate).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}</td>
               </tr>
               <tr>
                 <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Time to Expiry</td>
-                <td style={{ fontWeight: 600, color: diffDays < 0 ? 'var(--risk-critical-border)' : 'var(--text-main)' }}>
+                <td style={{ fontWeight: 700, color: diffDays < 0 ? '#DC2626' : (diffDays <= 7 ? '#EF4444' : 'var(--text-main)') }}>
                   {diffDays < 0 ? `Expired ${Math.abs(diffDays)} days ago` : `${diffDays} days remaining`}
+                </td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Supplier / Vendor</td>
+                <td>{item.supplier}</td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Warehouse Location</td>
+                <td>
+                  <span style={{ background: 'var(--bg-canvas)', padding: '0.25rem 0.6rem', borderRadius: 'var(--radius-sm)', fontWeight: 600 }}>
+                    {item.location}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Stock Status</td>
+                <td>
+                  <span style={{ fontWeight: 600, color: item.status === 'Quarantined' ? '#DC2626' : 'var(--color-primary)' }}>
+                    {item.status}
+                  </span>
                 </td>
               </tr>
               <tr>
@@ -100,7 +135,7 @@ export default function ItemDetail() {
               <line x1="19" y1="12" x2="5" y2="12" />
               <polyline points="12 19 5 12 12 5" />
             </svg>
-            Back to Inventory
+            Back to Catalog
           </button>
           <button className="btn-danger" onClick={handleDelete}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
