@@ -7,22 +7,41 @@ interface InventoryContextType {
   error: string | null;
   addItem: (item: Omit<InventoryItem, 'id'>) => void;
   deleteItem: (id: string) => void;
+  resetToMock: () => void;
 }
 
 const InventoryContext = createContext<InventoryContextType | undefined>(undefined);
+
+function sanitizeItems(parsed: any[]): InventoryItem[] {
+  if (!Array.isArray(parsed) || parsed.length === 0) return mockItems;
+  return parsed.map((item, idx) => ({
+    id: String(item.id || `item-${idx}`),
+    name: String(item.name || 'Unnamed Product'),
+    category: String(item.category || 'General'),
+    batchNo: String(item.batchNo || `BATCH-${1000 + idx}`),
+    quantity: typeof item.quantity === 'number' && !isNaN(item.quantity) ? item.quantity : 0,
+    unitPrice: typeof item.unitPrice === 'number' && !isNaN(item.unitPrice) ? item.unitPrice : 10.0,
+    expiryDate: item.expiryDate || new Date().toISOString(),
+    supplier: String(item.supplier || 'PharmaCorp Inc.'),
+    location: String(item.location || 'Aisle A1 - Shelf 1'),
+    status: item.status || 'In Stock',
+  }));
+}
 
 export function InventoryProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<InventoryItem[]>(() => {
     const saved = localStorage.getItem('expireguard_items');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        return sanitizeItems(parsed);
       } catch {
-        // Fall back to mock items
+        return mockItems;
       }
     }
     return mockItems;
   });
+
   const [loading] = useState(false);
   const [error] = useState<string | null>(null);
 
@@ -46,8 +65,13 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     setItems(prev => prev.filter(item => item.id !== id));
   };
 
+  const resetToMock = () => {
+    localStorage.removeItem('expireguard_items');
+    setItems(mockItems);
+  };
+
   return (
-    <InventoryContext.Provider value={{ items, loading, error, addItem, deleteItem }}>
+    <InventoryContext.Provider value={{ items, loading, error, addItem, deleteItem, resetToMock }}>
       {children}
     </InventoryContext.Provider>
   );

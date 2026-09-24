@@ -19,7 +19,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: DashboardProps) {
-  const { items, loading, error } = useInventory();
+  const { items, loading, error, resetToMock } = useInventory();
   const nowTimestamp = Date.now();
 
   // Additional Filter States for Table
@@ -45,11 +45,16 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
       Expired: 0
     };
 
-    items.forEach(item => {
-      totalStockVolume += item.quantity;
-      const daysLeft = Math.floor((new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
-      const risk = getRisk(item.expiryDate, nowTimestamp).key;
-      volumeByRisk[risk as keyof typeof volumeByRisk] += item.quantity;
+    (items || []).forEach(item => {
+      const qty = item.quantity || 0;
+      const price = item.unitPrice || 0;
+      totalStockVolume += qty;
+
+      const daysLeft = Math.floor((new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
+      const risk = getRisk(item.expiryDate || new Date().toISOString(), nowTimestamp).key;
+      if (volumeByRisk[risk as keyof typeof volumeByRisk] !== undefined) {
+        volumeByRisk[risk as keyof typeof volumeByRisk] += qty;
+      }
 
       if (daysLeft < 0) {
         expiredCount += 1;
@@ -65,12 +70,12 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
 
       // Stock Value at Risk (expiring within 30 days or already expired)
       if (daysLeft <= 30) {
-        valueAtRisk += item.quantity * item.unitPrice;
+        valueAtRisk += qty * price;
       }
     });
 
     return {
-      totalProducts: items.length,
+      totalProducts: (items || []).length,
       totalStockVolume,
       valueAtRisk,
       nearExpiryCount,
@@ -83,22 +88,29 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
   }, [items, nowTimestamp]);
 
   // Categories & Suppliers lists for dropdowns
-  const categories = useMemo(() => ['All', ...Array.from(new Set(items.map(i => i.category)))], [items]);
-  const suppliers = useMemo(() => ['All', ...Array.from(new Set(items.map(i => i.supplier)))], [items]);
+  const categories = useMemo(() => ['All', ...Array.from(new Set((items || []).map(i => i.category || 'General')))], [items]);
+  const suppliers = useMemo(() => ['All', ...Array.from(new Set((items || []).map(i => i.supplier || 'Standard Supplier')))], [items]);
 
   // Table Items Filtering
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
-      const daysLeft = (new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24);
-      const riskKey = getRisk(item.expiryDate, nowTimestamp).key;
+    const term = (searchTerm || '').toLowerCase();
+    return (items || []).filter(item => {
+      const qty = item.quantity || 0;
+      const name = (item.name || '').toLowerCase();
+      const category = (item.category || '').toLowerCase();
+      const batchNo = (item.batchNo || '').toLowerCase();
+      const supplier = (item.supplier || '').toLowerCase();
 
-      const qtyOk = item.quantity <= quantityFilter;
+      const daysLeft = (new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24);
+      const riskKey = getRisk(item.expiryDate || new Date().toISOString(), nowTimestamp).key;
+
+      const qtyOk = qty <= quantityFilter;
       const expOk = daysLeft <= expiryFilter;
-      const searchOk = searchTerm === '' ||
-        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.batchNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.supplier.toLowerCase().includes(searchTerm.toLowerCase());
+      const searchOk = term === '' ||
+        name.includes(term) ||
+        category.includes(term) ||
+        batchNo.includes(term) ||
+        supplier.includes(term);
 
       const catOk = selectedCategory === 'All' || item.category === selectedCategory;
       const supOk = selectedSupplier === 'All' || item.supplier === selectedSupplier;
@@ -110,7 +122,7 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
 
   // Donut chart calculations
   const donutPercentages = useMemo(() => {
-    const total = items.length || 1;
+    const total = (items || []).length || 1;
     return {
       safePct: Math.round((metrics.safeCount / total) * 100),
       monitorPct: Math.round((metrics.monitorCount / total) * 100),
@@ -122,9 +134,9 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
 
   // Urgent actions batches list
   const urgentBatches = useMemo(() => {
-    return items
+    return (items || [])
       .filter(item => {
-        const daysLeft = Math.floor((new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
+        const daysLeft = Math.floor((new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
         return daysLeft <= 30;
       })
       .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime())
@@ -222,7 +234,7 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
           </div>
         </div>
 
-        {/* Card 6: Stock Value at Risk (Decision Driver) */}
+        {/* Card 6: Stock Value at Risk */}
         <div className="stat-card" style={{ '--accent-color': '#8B5CF6', '--icon-bg': 'rgba(139, 92, 246, 0.12)' } as React.CSSProperties}>
           <div className="stat-card-header">
             <div className="stat-icon-box" style={{ color: '#8B5CF6' }}>
@@ -260,7 +272,6 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
           <div className="donut-chart-wrapper">
             <svg width="160" height="160" viewBox="0 0 42 42">
               <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="var(--bg-canvas)" strokeWidth="4.5" />
-              {/* Segments: Safe, Monitor, Action, Critical, Expired */}
               <circle
                 cx="21" cy="21" r="15.91549430918954"
                 fill="transparent"
@@ -348,7 +359,6 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
           </div>
 
           <div className="bar-chart-list">
-            {/* Safe */}
             <div className="bar-chart-row">
               <div className="bar-row-header">
                 <span style={{ color: '#065F46' }}>Safe (&gt;60d)</span>
@@ -359,7 +369,6 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
               </div>
             </div>
 
-            {/* Monitor */}
             <div className="bar-chart-row">
               <div className="bar-row-header">
                 <span style={{ color: '#92400E' }}>Monitor (31–60d)</span>
@@ -370,7 +379,6 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
               </div>
             </div>
 
-            {/* Action Required */}
             <div className="bar-chart-row">
               <div className="bar-row-header">
                 <span style={{ color: '#9A3412' }}>Action (8–30d)</span>
@@ -381,7 +389,6 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
               </div>
             </div>
 
-            {/* Critical */}
             <div className="bar-chart-row">
               <div className="bar-row-header">
                 <span style={{ color: '#991B1B' }}>Critical (≤7d)</span>
@@ -392,7 +399,6 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
               </div>
             </div>
 
-            {/* Expired */}
             <div className="bar-chart-row">
               <div className="bar-row-header">
                 <span style={{ color: '#374151' }}>Expired (&lt;0d)</span>
@@ -431,7 +437,7 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
                 </thead>
                 <tbody>
                   {urgentBatches.map(item => {
-                    const daysLeft = Math.floor((new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
+                    const daysLeft = Math.floor((new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
                     let ctaLabel = 'Prioritize Sale';
                     let ctaClass = 'action-cta--sale';
 
@@ -449,8 +455,8 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
                     return (
                       <tr key={item.id}>
                         <td>
-                          <div style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-main)' }}>{item.name}</div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{item.batchNo}</div>
+                          <div style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-main)' }}>{item.name || 'Product'}</div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{item.batchNo || 'BATCH-000'}</div>
                         </td>
                         <td style={{ fontWeight: 700, color: daysLeft <= 7 ? '#EF4444' : '#F97316' }}>
                           {daysLeft < 0 ? `${Math.abs(daysLeft)}d ago` : `${daysLeft}d left`}
@@ -484,6 +490,9 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
               Automated First Expired, First Out recommendations to minimize waste and optimize stock velocity.
             </p>
           </div>
+          <button className="btn-secondary" onClick={resetToMock} style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}>
+            Reset App Data
+          </button>
         </div>
 
         <div className="insights-panel">
@@ -552,13 +561,12 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
           <div>
             <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-main)' }}>Primary Inventory Matrix</h2>
             <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-              Showing {filteredItems.length} of {items.length} items with dynamic countdowns and location tracking
+              Showing {filteredItems.length} of {(items || []).length} items with dynamic countdowns and location tracking
             </p>
           </div>
 
           {/* Search & Multi-Filter Dropdown Header */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            {/* Category Dropdown */}
             <select
               value={selectedCategory}
               onChange={e => setSelectedCategory(e.target.value)}
@@ -570,7 +578,6 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
               ))}
             </select>
 
-            {/* Supplier Dropdown */}
             <select
               value={selectedSupplier}
               onChange={e => setSelectedSupplier(e.target.value)}
@@ -582,7 +589,6 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
               ))}
             </select>
 
-            {/* Risk Level Dropdown */}
             <select
               value={selectedRisk}
               onChange={e => setSelectedRisk(e.target.value)}
@@ -638,29 +644,31 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
                 </thead>
                 <tbody>
                   {filteredItems.map(item => {
-                    const daysLeft = Math.floor((new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
-                    const risk = getRisk(item.expiryDate, nowTimestamp);
-                    const itemValueAtRisk = daysLeft <= 30 ? (item.quantity * item.unitPrice) : 0;
+                    const daysLeft = Math.floor((new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
+                    const risk = getRisk(item.expiryDate || new Date().toISOString(), nowTimestamp);
+                    const qty = item.quantity || 0;
+                    const price = item.unitPrice || 0;
+                    const itemValueAtRisk = daysLeft <= 30 ? (qty * price) : 0;
 
                     return (
                       <tr key={item.id}>
                         <td style={{ fontWeight: 700 }}>
                           <Link to={`/inventory/${item.id}`} style={{ color: 'var(--text-main)', textDecoration: 'none' }}>
-                            {item.name}
+                            {item.name || 'Product'}
                           </Link>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>{item.category}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>{item.category || 'General'}</div>
                         </td>
                         <td>
                           <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', background: 'var(--bg-canvas)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                            {item.batchNo}
+                            {item.batchNo || 'BATCH-000'}
                           </span>
                         </td>
-                        <td style={{ fontWeight: 700 }}>{item.quantity} units</td>
-                        <td>${item.unitPrice.toFixed(2)}</td>
+                        <td style={{ fontWeight: 700 }}>{qty} units</td>
+                        <td>${price.toFixed(2)}</td>
                         <td style={{ fontWeight: 700, color: itemValueAtRisk > 0 ? '#7C3AED' : 'var(--text-muted)' }}>
                           {itemValueAtRisk > 0 ? `$${itemValueAtRisk.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
                         </td>
-                        <td>{new Date(item.expiryDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                        <td>{new Date(item.expiryDate || Date.now()).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</td>
                         <td>
                           <span style={{ fontWeight: 700, color: daysLeft < 0 ? '#DC2626' : (daysLeft <= 7 ? '#EF4444' : (daysLeft <= 30 ? '#EA580C' : 'var(--text-main)')) }}>
                             {daysLeft < 0 ? `${Math.abs(daysLeft)}d ago` : `${daysLeft} days`}
@@ -672,10 +680,10 @@ export default function Dashboard({ quantityFilter, expiryFilter, searchTerm }: 
                             {risk.label}
                           </span>
                         </td>
-                        <td style={{ fontSize: '0.85rem' }}>{item.supplier}</td>
+                        <td style={{ fontSize: '0.85rem' }}>{item.supplier || 'PharmaCorp Inc.'}</td>
                         <td style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                           <span style={{ background: 'var(--bg-canvas)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                            {item.location}
+                            {item.location || 'Aisle A1'}
                           </span>
                         </td>
                         <td style={{ textAlign: 'right' }}>

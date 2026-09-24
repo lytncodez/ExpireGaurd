@@ -19,7 +19,7 @@ interface InventoryListProps {
 }
 
 export default function InventoryList({ quantityFilter, expiryFilter, searchTerm = '' }: InventoryListProps) {
-  const { items, loading, error } = useInventory();
+  const { items, loading, error, resetToMock } = useInventory();
   const nowTimestamp = Date.now();
 
   // Multi-Filter dropdown states
@@ -27,21 +27,28 @@ export default function InventoryList({ quantityFilter, expiryFilter, searchTerm
   const [selectedSupplier, setSelectedSupplier] = useState<string>('All');
   const [selectedRisk, setSelectedRisk] = useState<string>('All');
 
-  const categories = useMemo(() => ['All', ...Array.from(new Set(items.map(i => i.category)))], [items]);
-  const suppliers = useMemo(() => ['All', ...Array.from(new Set(items.map(i => i.supplier)))], [items]);
+  const categories = useMemo(() => ['All', ...Array.from(new Set((items || []).map(i => i.category || 'General')))], [items]);
+  const suppliers = useMemo(() => ['All', ...Array.from(new Set((items || []).map(i => i.supplier || 'Standard Supplier')))], [items]);
 
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
-      const qtyOk = quantityFilter !== undefined ? item.quantity <= quantityFilter : true;
-      const daysLeft = (new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24);
+    const term = (searchTerm || '').toLowerCase();
+    return (items || []).filter(item => {
+      const qty = item.quantity || 0;
+      const qtyOk = quantityFilter !== undefined ? qty <= quantityFilter : true;
+      const daysLeft = (new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24);
       const expOk = expiryFilter !== undefined ? daysLeft <= expiryFilter : true;
-      const riskKey = getRisk(item.expiryDate, nowTimestamp).key;
+      const riskKey = getRisk(item.expiryDate || new Date().toISOString(), nowTimestamp).key;
 
-      const searchOk = searchTerm === '' ||
-        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.batchNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.supplier.toLowerCase().includes(searchTerm.toLowerCase());
+      const name = (item.name || '').toLowerCase();
+      const category = (item.category || '').toLowerCase();
+      const batchNo = (item.batchNo || '').toLowerCase();
+      const supplier = (item.supplier || '').toLowerCase();
+
+      const searchOk = term === '' ||
+        name.includes(term) ||
+        category.includes(term) ||
+        batchNo.includes(term) ||
+        supplier.includes(term);
 
       const catOk = selectedCategory === 'All' || item.category === selectedCategory;
       const supOk = selectedSupplier === 'All' || item.supplier === selectedSupplier;
@@ -60,12 +67,16 @@ export default function InventoryList({ quantityFilter, expiryFilter, searchTerm
               Inventory Catalog
             </h1>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Showing {filteredItems.length} of {items.length} total products in active stock
+              Showing {filteredItems.length} of {(items || []).length} total products in active stock
             </p>
           </div>
 
           {/* Search & Filter Header Dropdowns */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button className="btn-secondary" onClick={resetToMock} style={{ fontSize: '0.8rem', padding: '0.45rem 0.75rem' }}>
+              Reset Data
+            </button>
+
             <select
               value={selectedCategory}
               onChange={e => setSelectedCategory(e.target.value)}
@@ -139,29 +150,31 @@ export default function InventoryList({ quantityFilter, expiryFilter, searchTerm
                 </thead>
                 <tbody>
                   {filteredItems.map(item => {
-                    const daysLeft = Math.floor((new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
-                    const risk = getRisk(item.expiryDate, nowTimestamp);
-                    const itemValueAtRisk = daysLeft <= 30 ? (item.quantity * item.unitPrice) : 0;
+                    const daysLeft = Math.floor((new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
+                    const risk = getRisk(item.expiryDate || new Date().toISOString(), nowTimestamp);
+                    const qty = item.quantity || 0;
+                    const price = item.unitPrice || 0;
+                    const itemValueAtRisk = daysLeft <= 30 ? (qty * price) : 0;
 
                     return (
                       <tr key={item.id}>
                         <td style={{ fontWeight: 700 }}>
                           <Link to={`/inventory/${item.id}`} style={{ color: 'var(--text-main)', textDecoration: 'none' }}>
-                            {item.name}
+                            {item.name || 'Product'}
                           </Link>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.category}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.category || 'General'}</div>
                         </td>
                         <td>
                           <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', background: 'var(--bg-canvas)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                            {item.batchNo}
+                            {item.batchNo || 'BATCH-000'}
                           </span>
                         </td>
-                        <td style={{ fontWeight: 700 }}>{item.quantity} units</td>
-                        <td>${item.unitPrice.toFixed(2)}</td>
+                        <td style={{ fontWeight: 700 }}>{qty} units</td>
+                        <td>${price.toFixed(2)}</td>
                         <td style={{ fontWeight: 700, color: itemValueAtRisk > 0 ? '#7C3AED' : 'var(--text-muted)' }}>
                           {itemValueAtRisk > 0 ? `$${itemValueAtRisk.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
                         </td>
-                        <td>{new Date(item.expiryDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</td>
+                        <td>{new Date(item.expiryDate || Date.now()).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</td>
                         <td>
                           <span style={{ fontWeight: 700, color: daysLeft < 0 ? '#DC2626' : (daysLeft <= 7 ? '#EF4444' : (daysLeft <= 30 ? '#EA580C' : 'var(--text-main)')) }}>
                             {daysLeft < 0 ? `${Math.abs(daysLeft)}d ago` : `${daysLeft} days`}
@@ -173,10 +186,10 @@ export default function InventoryList({ quantityFilter, expiryFilter, searchTerm
                             {risk.label}
                           </span>
                         </td>
-                        <td style={{ fontSize: '0.85rem' }}>{item.supplier}</td>
+                        <td style={{ fontSize: '0.85rem' }}>{item.supplier || 'PharmaCorp Inc.'}</td>
                         <td style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                           <span style={{ background: 'var(--bg-canvas)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                            {item.location}
+                            {item.location || 'Aisle A1'}
                           </span>
                         </td>
                         <td style={{ textAlign: 'right' }}>
