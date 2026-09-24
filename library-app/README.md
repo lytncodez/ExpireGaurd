@@ -1,32 +1,28 @@
-# React + TypeScript + Vite
+# ExpiryGuard Frontend Application 🛡️
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+This directory contains the web frontend for **ExpiryGuard**, an intelligent expiration risk tracking and pharmacy/retail inventory management system.
 
-Currently, two official plugins are available:
+## 🚀 Commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- `npm run dev`: Starts local Vite development server with Hot Module Replacement (HMR).
+- `npm run build`: Compiles TypeScript and builds production distribution artifacts in `dist/`.
+- `npx oxlint`: Runs Oxlint static code analyzer.
 
-## React Compiler
+## 🛠️ Tech Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **React 18** with Functional Components & Hooks
+- **TypeScript** with strict type checking enabled
+- **Vite** for fast HMR dev environment and production builds
+- **React Router DOM v6** for client-side routing
+- **Custom CSS Design System** using CSS custom properties (`--bg-canvas`, `--sidebar-bg`, risk color tokens)
 
-## Expanding the Oxlint configuration
+## 📁 Key Directories
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+- `src/api/`: Data models ([`mockData.ts`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/api/mockData.ts)) and state management ([`useInventory.tsx`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/api/useInventory.tsx)).
+- `src/components/`: Reusable navigation components ([`Sidebar.tsx`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/components/Sidebar.tsx), [`Header.tsx`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/components/Header.tsx)).
+- `src/pages/`:
+  - [`Dashboard.tsx`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/pages/Dashboard.tsx): Overview KPI cards, Donut & Bar chart analytics, Urgent Actions table, and FEFO Smart Decision Engine.
+  - [`InventoryList.tsx`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/pages/InventoryList.tsx): Warehouse stock matrix with multi-filter search header.
+  - [`AddItem.tsx`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/pages/AddItem.tsx): New stock batch registration form.
+  - [`ItemDetail.tsx`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/pages/ItemDetail.tsx): Individual item management & detail view.
+- `src/styles/`: Global design tokens and theme rules ([`theme.css`](file:///C:/Users/GRACETECH%20COMPUTERS/Desktop/Innovation_lab/ExpireGaurd/library-app/src/styles/theme.css)).
