@@ -16,15 +16,24 @@ function sanitizeItems(parsed: any[]): InventoryItem[] {
   if (!Array.isArray(parsed) || parsed.length === 0) return mockItems;
   return parsed.map((item, idx) => ({
     id: String(item.id || `item-${idx}`),
-    name: String(item.name || 'Unnamed Product'),
+    name: String(item.name || item.productName || 'Unnamed Product'),
+    productName: String(item.productName || item.name || 'Unnamed Product'),
     category: String(item.category || 'General'),
-    batchNo: String(item.batchNo || `BATCH-${1000 + idx}`),
+    batchNo: String(item.batchNo || item.batchNumber || `BATCH-${1000 + idx}`),
+    batchNumber: String(item.batchNumber || item.batchNo || `BATCH-${1000 + idx}`),
     quantity: typeof item.quantity === 'number' && !isNaN(item.quantity) ? item.quantity : 0,
-    unitPrice: typeof item.unitPrice === 'number' && !isNaN(item.unitPrice) ? item.unitPrice : 10.0,
+    unitPrice: typeof item.unitPrice === 'number' && !isNaN(item.unitPrice) ? item.unitPrice : (typeof item.unitCostGhs === 'number' ? item.unitCostGhs : 10.0),
+    unitCostGhs: typeof item.unitCostGhs === 'number' && !isNaN(item.unitCostGhs) ? item.unitCostGhs : (typeof item.unitPrice === 'number' ? item.unitPrice : 10.0),
+    sellingPriceGhs: typeof item.sellingPriceGhs === 'number' && !isNaN(item.sellingPriceGhs) ? item.sellingPriceGhs : undefined,
     expiryDate: item.expiryDate || new Date().toISOString(),
+    daysToExpiry: typeof item.daysToExpiry === 'number' ? item.daysToExpiry : undefined,
     supplier: String(item.supplier || 'PharmaCorp Inc.'),
-    location: String(item.location || 'Aisle A1 - Shelf 1'),
+    location: String(item.location || item.storageLocation || 'Aisle A1 - Shelf 1'),
+    storageLocation: String(item.storageLocation || item.location || 'Aisle A1 - Shelf 1'),
     status: item.status || 'In Stock',
+    riskStatus: item.riskStatus || undefined,
+    recommendedAction: item.recommendedAction || 'Review stock rotation',
+    velocity: item.velocity || 'Moderate',
   }));
 }
 
