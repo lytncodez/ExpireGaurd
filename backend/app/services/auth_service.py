@@ -8,10 +8,12 @@ from app.schemas.user import UserCreate, UserLogin
 
 def create_user(db: Session, user_data: UserCreate) -> User:
     """Create new user"""
+    full_name = user_data.full_name or user_data.name
     db_user = User(
         email=user_data.email,
         hashed_password=hash_password(user_data.password),
-        full_name=user_data.full_name,
+        full_name=full_name,
+        phone=user_data.phone,
     )
     db.add(db_user)
     db.commit()

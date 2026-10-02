@@ -14,6 +14,7 @@ class ExpiryStatus(str, enum.Enum):
     EXPIRING_SOON = "EXPIRING_SOON"  # 31-90 days
     CRITICAL = "CRITICAL"  # 1-30 days
     EXPIRED = "EXPIRED"  # <= 0 days
+    PARTIAL = "PARTIAL"  # manually updated / partial stock
 
 
 class Batch(Base):

@@ -50,7 +50,7 @@ class MockSMSProvider(BaseSMSProvider):
         
         return {
             "success": True,
-            "message_id": f"mock-{phone_number}-{id(message)}",
+            "message_id": f"Test SMS mock-{phone_number}-{id(message)}",
             "error": None
         }
 

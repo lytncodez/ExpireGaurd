@@ -1,21 +1,24 @@
-"""
-Security utilities for authentication.
-
-Two main functions:
-1. Password hashing (bcrypt)
-2. JWT token creation and verification
-"""
+"""Security utilities for authentication."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+
+from app.models.user import User
 
 from .config import settings
+from .database import get_db
 
-# Password hashing context (bcrypt algorithm)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Use a library-supported hash that works reliably on modern Python + bcrypt
+# packages; avoiding the incompatible bcrypt passthrough issue seen in tests.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+security = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
@@ -102,3 +105,35 @@ def decode_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
+    """Dependency that validates the Authorization header and returns the user."""
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = decode_token(credentials.credentials)
+    if payload is None or "sub" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = payload.get("sub")
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return user

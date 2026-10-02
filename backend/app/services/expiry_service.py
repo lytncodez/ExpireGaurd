@@ -14,12 +14,12 @@ def calculate_days_remaining(expiry_date: date) -> int:
 
 
 def get_expiry_status(days_remaining: int) -> ExpiryStatus:
-    """Determine expiry status based on days remaining"""
+    """Determine expiry status based on days remaining."""
     if days_remaining <= 0:
         return ExpiryStatus.EXPIRED
     elif 1 <= days_remaining <= 30:
         return ExpiryStatus.CRITICAL
-    elif 31 <= days_remaining <= 90:
+    elif 31 <= days_remaining <= 59:
         return ExpiryStatus.EXPIRING_SOON
     else:
         return ExpiryStatus.SAFE
