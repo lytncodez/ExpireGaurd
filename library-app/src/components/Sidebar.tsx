@@ -27,9 +27,7 @@ export default function Sidebar({
     ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : 'EG';
 
-  const roleLabel = user?.role
-    ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
-    : 'User';
+  const roleLabel = user?.role === 'admin' ? 'Admin' : user ? 'Dispenser' : 'User';
 
   const normalizePositiveInteger = (value: number | string) => {
     if (value === '' || value === null || value === undefined) return 0;
@@ -48,29 +46,6 @@ export default function Sidebar({
 
   return (
     <>
-      {isCollapsed && (
-        <>
-          <div
-            className="sidebar-edge-trigger"
-            aria-hidden="true"
-            onMouseEnter={() => setIsCollapsed(false)}
-          />
-          <button
-            type="button"
-            className="sidebar-floating-toggle"
-            aria-label="Expand sidebar"
-            title="Expand sidebar"
-            onClick={() => setIsCollapsed(false)}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 7h14" />
-              <path d="M5 12h14" />
-              <path d="M5 17h14" />
-            </svg>
-          </button>
-        </>
-      )}
-
       <div className={`app-sidebar-shell ${isCollapsed ? 'is-collapsed' : ''}`}>
         <aside className="app-sidebar">
           <div className="sidebar-header-row">
@@ -94,11 +69,7 @@ export default function Sidebar({
             onClick={() => setIsCollapsed(!isCollapsed)}
           >
             {isCollapsed ? (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 7h14" />
-                <path d="M5 12h14" />
-                <path d="M5 17h14" />
-              </svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6" /></svg>
             ) : (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M15 18 9 12l6-6" />
@@ -112,6 +83,8 @@ export default function Sidebar({
             <nav className="sidebar-nav">
               <NavLink
                 to="/dashboard"
+                aria-label="Dashboard"
+                title="Dashboard"
                 className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
               >
                 <span className="nav-icon">
@@ -122,11 +95,13 @@ export default function Sidebar({
                     <rect x="3" y="16" width="7" height="5" rx="1" />
                   </svg>
                 </span>
-                Dashboard
+                <span className="nav-label">Dashboard</span>
               </NavLink>
 
               <NavLink
                 to="/inventory"
+                aria-label="Inventory"
+                title="Inventory"
                 className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
               >
                 <span className="nav-icon">
@@ -136,11 +111,13 @@ export default function Sidebar({
                     <path d="M12 12v9.5" />
                   </svg>
                 </span>
-                Inventory
+                <span className="nav-label">Inventory</span>
               </NavLink>
 
               <NavLink
                 to="/add"
+                aria-label="Add / Import"
+                title="Add / Import"
                 className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
               >
                 <span className="nav-icon">
@@ -150,11 +127,13 @@ export default function Sidebar({
                     <line x1="8" y1="12" x2="16" y2="12" />
                   </svg>
                 </span>
-                Add / Import
+                <span className="nav-label">Add / Import</span>
               </NavLink>
 
               <NavLink
                 to="/alerts"
+                aria-label="Alerts"
+                title="Alerts"
                 className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
               >
                 <span className="nav-icon">
@@ -163,11 +142,14 @@ export default function Sidebar({
                     <path d="M13.73 21a2 2 0 0 1-3.46 0" />
                   </svg>
                 </span>
-                Alerts
+                <span className="nav-label">Alerts</span>
               </NavLink>
 
+              {isAdmin && <>
               <NavLink
                 to="/reports"
+                aria-label="Reports"
+                title="Reports"
                 className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
               >
                 <span className="nav-icon">
@@ -176,11 +158,13 @@ export default function Sidebar({
                     <path d="m19 9-5 5-4-4-3 3" />
                   </svg>
                 </span>
-                Reports
+                <span className="nav-label">Reports</span>
               </NavLink>
 
               <NavLink
                 to="/insights"
+                aria-label="AI Insights"
+                title="AI Insights"
                 className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
               >
                 <span className="nav-icon">
@@ -188,12 +172,15 @@ export default function Sidebar({
                     <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
                   </svg>
                 </span>
-                AI Insights
+                <span className="nav-label">AI Insights</span>
               </NavLink>
+              </>}
 
               {isAdmin && (
                 <NavLink
                   to="/settings"
+                  aria-label="Settings"
+                  title="Settings"
                   className={({ isActive }) => (isActive ? 'nav-item active' : 'nav-item')}
                 >
                   <span className="nav-icon">
@@ -202,7 +189,7 @@ export default function Sidebar({
                       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
                     </svg>
                   </span>
-                  Settings
+                  <span className="nav-label">Settings</span>
                 </NavLink>
               )}
             </nav>

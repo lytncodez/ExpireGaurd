@@ -1,211 +1,120 @@
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Search, ShieldAlert } from 'lucide-react';
 import { useInventory } from '../api/useInventory';
+import type { InventoryItem } from '../api/mockData';
+import { formatGhc } from '../utils/currency';
+import { useAuth } from '../api/useAuth';
 
-function getRisk(expiryDate: string, nowTimestamp: number): { label: string; key: string; badgeClass: string } {
-  const exp = new Date(expiryDate).getTime();
-  const diffDays = Math.floor((exp - nowTimestamp) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) return { label: 'Expired', key: 'Expired', badgeClass: 'risk-badge--expired' };
-  if (diffDays <= 7) return { label: 'Critical', key: 'Critical', badgeClass: 'risk-badge--critical' };
-  if (diffDays <= 30) return { label: 'Action Required', key: 'Action Required', badgeClass: 'risk-badge--action' };
-  if (diffDays <= 60) return { label: 'Monitor', key: 'Monitor', badgeClass: 'risk-badge--monitor' };
-  return { label: 'Safe', key: 'Safe', badgeClass: 'risk-badge--safe' };
+type InventoryTab = 'all' | 'batch' | 'risk' | 'expired';
+const dayMs = 24 * 60 * 60 * 1000;
+const tabs: { id: InventoryTab; label: string }[] = [
+  { id: 'all', label: 'All Stock' },
+  { id: 'batch', label: 'By Batch (FEFO View)' },
+  { id: 'risk', label: 'Near-Expiry / At Risk' },
+  { id: 'expired', label: 'Expired Stock' },
+];
+
+function getRisk(item: InventoryItem, now: number) {
+  const expiry = new Date(item.expiryDate || now).getTime();
+  const days = Math.floor((expiry - now) / dayMs);
+  if (days < 0) return { label: 'Expired', key: 'Expired', badge: 'risk-badge--expired', days };
+  if (days <= 7) return { label: 'Critical', key: 'Critical', badge: 'risk-badge--critical', days };
+  if (days <= 30) return { label: 'Action Required', key: 'Action Required', badge: 'risk-badge--action', days };
+  if (days <= 60) return { label: 'Monitor', key: 'Monitor', badge: 'risk-badge--monitor', days };
+  return { label: 'Safe', key: 'Safe', badge: 'risk-badge--safe', days };
 }
 
-interface InventoryListProps {
-  quantityFilter?: number;
-  expiryFilter?: number;
-  searchTerm?: string;
+function formatDate(value?: string) {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString('en-GH', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function InventoryList({ quantityFilter, expiryFilter, searchTerm = '' }: InventoryListProps) {
-  const { items, loading, error, resetToMock } = useInventory();
-  const nowTimestamp = Date.now();
+export default function InventoryList({ searchTerm = '' }: { searchTerm?: string }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const { items, loading, error, updateItem } = useInventory();
+  const [activeTab, setActiveTab] = useState<InventoryTab>('all');
+  const [localSearch, setLocalSearch] = useState('');
+  const [maxQuantity, setMaxQuantity] = useState('');
+  const [maxExpiryDays, setMaxExpiryDays] = useState('');
+  const now = Date.now();
+  const searchTerms = [searchTerm, localSearch].map(value => value.trim().toLowerCase()).filter(Boolean);
+  const qtyLimit = maxQuantity === '' ? undefined : Number(maxQuantity);
+  const expiryLimit = maxExpiryDays === '' ? undefined : Number(maxExpiryDays);
 
-  // Multi-Filter dropdown states
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [selectedSupplier, setSelectedSupplier] = useState<string>('All');
-  const [selectedRisk, setSelectedRisk] = useState<string>('All');
+  const filteredItems = useMemo(() => (items || []).filter(item => {
+    const risk = getRisk(item, now);
+    const isQuarantined = item.status === 'Quarantined';
+    if (activeTab === 'expired' && risk.key !== 'Expired') return false;
+    if (activeTab !== 'expired' && (risk.key === 'Expired' || isQuarantined)) return false;
+    if (activeTab === 'risk' && !['Monitor', 'Action Required', 'Critical'].includes(risk.key)) return false;
+    const searchable = [item.name, item.category, item.batchNo, ...(isAdmin ? [item.supplier] : []), item.location].join(' ').toLowerCase();
+    if (searchTerms.some(search => !searchable.includes(search))) return false;
+    if (qtyLimit !== undefined && Number.isFinite(qtyLimit) && item.quantity > qtyLimit) return false;
+    if (expiryLimit !== undefined && Number.isFinite(expiryLimit) && risk.days > expiryLimit) return false;
+    return true;
+  }), [items, activeTab, searchTerms.join('|'), qtyLimit, expiryLimit, now, isAdmin]);
 
-  const categories = useMemo(() => ['All', ...Array.from(new Set((items || []).map(i => i.category || 'General')))], [items]);
-  const suppliers = useMemo(() => ['All', ...Array.from(new Set((items || []).map(i => i.supplier || 'Standard Supplier')))], [items]);
+  const visibleItems = useMemo(() => {
+    if (activeTab !== 'batch') return filteredItems;
+    return [...filteredItems].sort((a, b) => a.name.localeCompare(b.name) || new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime());
+  }, [filteredItems, activeTab]);
 
-  const filteredItems = useMemo(() => {
-    const term = (searchTerm || '').toLowerCase();
-    return (items || []).filter(item => {
-      const qty = item.quantity || 0;
-      const qtyOk = quantityFilter !== undefined ? qty <= quantityFilter : true;
-      const daysLeft = (new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24);
-      const expOk = expiryFilter !== undefined ? daysLeft <= expiryFilter : true;
-      const riskKey = getRisk(item.expiryDate || new Date().toISOString(), nowTimestamp).key;
+  const firstBatchByProduct = useMemo(() => {
+    const ids = new Set<string>();
+    if (activeTab === 'batch') {
+      for (const item of visibleItems) {
+        if (!ids.has(item.name)) ids.add(item.name);
+      }
+    }
+    return ids;
+  }, [activeTab, visibleItems]);
 
-      const name = (item.name || '').toLowerCase();
-      const category = (item.category || '').toLowerCase();
-      const batchNo = (item.batchNo || '').toLowerCase();
-      const supplier = (item.supplier || '').toLowerCase();
-
-      const searchOk = term === '' ||
-        name.includes(term) ||
-        category.includes(term) ||
-        batchNo.includes(term) ||
-        supplier.includes(term);
-
-      const catOk = selectedCategory === 'All' || item.category === selectedCategory;
-      const supOk = selectedSupplier === 'All' || item.supplier === selectedSupplier;
-      const riskOk = selectedRisk === 'All' || riskKey === selectedRisk;
-
-      return qtyOk && expOk && searchOk && catOk && supOk && riskOk;
-    });
-  }, [items, quantityFilter, expiryFilter, searchTerm, selectedCategory, selectedSupplier, selectedRisk, nowTimestamp]);
-
-  return (
-    <div className="page-body">
-      <div className="card-container">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
-          <div>
-            <h1 style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '0.25rem' }}>
-              Inventory Catalog
-            </h1>
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Showing {filteredItems.length} of {(items || []).length} total products in active stock
-            </p>
-          </div>
-
-          {/* Search & Filter Header Dropdowns */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <button className="btn-secondary" onClick={resetToMock} style={{ fontSize: '0.8rem', padding: '0.45rem 0.75rem' }}>
-              Reset Data
-            </button>
-
-            <select
-              value={selectedCategory}
-              onChange={e => setSelectedCategory(e.target.value)}
-              className="form-select"
-            >
-              <option value="All">All Categories</option>
-              {categories.filter(c => c !== 'All').map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
-
-            <select
-              value={selectedSupplier}
-              onChange={e => setSelectedSupplier(e.target.value)}
-              className="form-select"
-            >
-              <option value="All">All Suppliers</option>
-              {suppliers.filter(s => s !== 'All').map(sup => (
-                <option key={sup} value={sup}>{sup}</option>
-              ))}
-            </select>
-
-            <select
-              value={selectedRisk}
-              onChange={e => setSelectedRisk(e.target.value)}
-              className="form-select"
-            >
-              <option value="All">All Risk Levels</option>
-              <option value="Safe">Safe (&gt;60d)</option>
-              <option value="Monitor">Monitor (31-60d)</option>
-              <option value="Action Required">Action (8-30d)</option>
-              <option value="Critical">Critical (1-7d)</option>
-              <option value="Expired">Expired (&lt;0d)</option>
-            </select>
-
-            <Link to="/add" className="btn-primary" style={{ padding: '0.55rem 1rem', fontSize: '0.88rem' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              Add Item
-            </Link>
-          </div>
-        </div>
-
-        {loading && <p style={{ color: 'var(--text-muted)' }}>Loading inventory catalog...</p>}
-        {error && <p style={{ color: 'var(--risk-critical-border)' }}>{error}</p>}
-
-        {!loading && !error && (
-          <div className="table-responsive">
-            {filteredItems.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                <p style={{ fontSize: '1rem', fontWeight: 600 }}>No inventory items match the current multi-filter selection.</p>
-              </div>
-            ) : (
-              <table className="modern-table">
-                <thead>
-                  <tr>
-                    <th>Product Name</th>
-                    <th>Batch No.</th>
-                    <th>Quantity</th>
-                    <th>Unit Price</th>
-                    <th>Value at Risk</th>
-                    <th>Expiry Date</th>
-                    <th>Days Left</th>
-                    <th>Risk Level</th>
-                    <th>Supplier</th>
-                    <th>Location</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredItems.map(item => {
-                    const daysLeft = Math.floor((new Date(item.expiryDate || Date.now()).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
-                    const risk = getRisk(item.expiryDate || new Date().toISOString(), nowTimestamp);
-                    const qty = item.quantity || 0;
-                    const price = item.unitPrice || 0;
-                    const itemValueAtRisk = daysLeft <= 30 ? (qty * price) : 0;
-
-                    return (
-                      <tr key={item.id}>
-                        <td style={{ fontWeight: 700 }}>
-                          <Link to={`/inventory/${item.id}`} style={{ color: 'var(--text-main)', textDecoration: 'none' }}>
-                            {item.name || 'Product'}
-                          </Link>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.category || 'General'}</div>
-                        </td>
-                        <td>
-                          <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', background: 'var(--bg-canvas)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                            {item.batchNo || 'BATCH-000'}
-                          </span>
-                        </td>
-                        <td style={{ fontWeight: 700 }}>{qty} units</td>
-                        <td>${price.toFixed(2)}</td>
-                        <td style={{ fontWeight: 700, color: itemValueAtRisk > 0 ? '#7C3AED' : 'var(--text-muted)' }}>
-                          {itemValueAtRisk > 0 ? `$${itemValueAtRisk.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
-                        </td>
-                        <td>{new Date(item.expiryDate || Date.now()).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</td>
-                        <td>
-                          <span style={{ fontWeight: 700, color: daysLeft < 0 ? '#DC2626' : (daysLeft <= 7 ? '#EF4444' : (daysLeft <= 30 ? '#EA580C' : 'var(--text-main)')) }}>
-                            {daysLeft < 0 ? `${Math.abs(daysLeft)}d ago` : `${daysLeft} days`}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`risk-badge ${risk.badgeClass}`}>
-                            <span className="risk-badge-dot" />
-                            {risk.label}
-                          </span>
-                        </td>
-                        <td style={{ fontSize: '0.85rem' }}>{item.supplier || 'PharmaCorp Inc.'}</td>
-                        <td style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                          <span style={{ background: 'var(--bg-canvas)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)' }}>
-                            {item.location || 'Aisle A1'}
-                          </span>
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <Link to={`/inventory/${item.id}`} className="btn-secondary" style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}>
-                            Manage
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-      </div>
+  return <div className="page-body inventory-page">
+    <div className="inventory-heading">
+      <div><p className="inventory-eyebrow">STOCK MANAGEMENT</p><h1>Inventory</h1><p className="inventory-subtitle">Your full stock and batch repository, with expiry risk and FEFO priority in view.</p></div>
+      <Link to="/add" className="btn-primary inventory-add">+ Add Stock</Link>
     </div>
-  );
+
+    <div className="inventory-tabs" role="tablist" aria-label="Inventory views">
+      {tabs.map(tab => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={`inventory-tab${activeTab === tab.id ? ' is-active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}{tab.id === 'expired' && <span className="inventory-tab-count">{items.filter(item => getRisk(item, now).key === 'Expired').length}</span>}</button>)}
+    </div>
+
+    <section className="card-container inventory-card">
+      <div className="inventory-toolbar">
+        <label className="inventory-search"><Search size={17} /><input aria-label="Search inventory" value={localSearch} onChange={event => setLocalSearch(event.target.value)} placeholder="Search products, batches, suppliers..." /></label>
+        <label className="inventory-limit"><span>Max quantity</span><span className="inventory-number"><b>&le;</b><input aria-label="Maximum quantity" type="number" min="0" value={maxQuantity} onChange={event => setMaxQuantity(event.target.value)} placeholder="Any" /></span></label>
+        <label className="inventory-limit"><span>Expiry in days</span><span className="inventory-number"><b>&le;</b><input aria-label="Maximum expiry days" type="number" min="0" value={maxExpiryDays} onChange={event => setMaxExpiryDays(event.target.value)} placeholder="Any" /></span></label>
+        <span className="inventory-result-count">{visibleItems.length} {visibleItems.length === 1 ? 'batch' : 'batches'}</span>
+      </div>
+
+      {activeTab === 'expired' && <div className="quarantine-notice"><ShieldAlert size={17} /><span>Expired stock is out of active circulation. Quarantine it for supplier return or disposal.</span></div>}
+      {loading && <p className="inventory-empty">Loading inventory...</p>}
+      {error && <p className="inventory-error">{error}</p>}
+      {!loading && !error && <div className="table-responsive inventory-table-wrap">
+        {visibleItems.length === 0 ? <div className="inventory-empty"><strong>No stock matches this view.</strong><span>Adjust the search or filters, or switch to another inventory tab.</span></div> : <table className="modern-table inventory-table">
+          <thead><tr><th>Product &amp; Category</th><th>Batch &amp; Storage Location</th><th>Quantity</th><th>{isAdmin ? 'Unit Cost / Selling Price (GH₵)' : 'Selling Price (GH₵)'}</th><th>Manufacturing Date</th><th>Expiry Date</th>{isAdmin && <th>Supplier &amp; Date Received</th>}<th>Status</th>{activeTab === 'expired' && <th>Action</th>}</tr></thead>
+          <tbody>{visibleItems.map(item => {
+            const risk = getRisk(item, now);
+            const expired = risk.key === 'Expired';
+            const quarantined = item.status === 'Quarantined';
+            const useFirst = activeTab === 'batch' && firstBatchByProduct.has(item.name) && visibleItems.find(row => row.name === item.name)?.id === item.id;
+            return <tr key={item.id} className={`${expired ? 'inventory-row-expired' : ''} inventory-row-clickable`}>
+              <td><Link className="inventory-product-link" to={`/inventory/${item.id}`}>{item.name || item.productName || 'Product'}</Link><span className="inventory-cell-muted">{item.category || 'General'}</span></td>
+              <td><span className="inventory-batch">{item.batchNo || item.batchNumber || '-'} </span><span className="inventory-cell-muted">{item.location || item.storageLocation || '-'}{useFirst && <em className="use-first-tag">Use First</em>}</span></td>
+              <td><strong>{item.quantity.toLocaleString()}</strong><span className="inventory-cell-muted">units</span></td>
+              <td>{isAdmin ? <><span className="inventory-price">{formatGhc(item.unitCostGhs ?? item.unitPrice ?? 0)}</span><span className="inventory-cell-muted">Sell {formatGhc(item.sellingPriceGhs ?? item.unitPrice ?? 0)}</span></> : <span className="inventory-price">{formatGhc(item.sellingPriceGhs ?? item.unitPrice ?? 0)}</span>}</td>
+              <td>{formatDate(item.manufacturingDate)}</td>
+              <td><span className="inventory-expiry-date">{formatDate(item.expiryDate)}</span><span className="inventory-cell-muted">{risk.days < 0 ? `${Math.abs(risk.days)} days ago` : `${risk.days} days left`}</span></td>
+              {isAdmin && <td><span>{item.supplier || '-'}</span><span className="inventory-cell-muted">Received {formatDate(item.dateReceived)}</span></td>}
+              <td><span className={`risk-badge ${risk.badge}`}><span className="risk-badge-dot" />{quarantined ? 'Quarantined' : risk.label}</span></td>
+              {activeTab === 'expired' && <td>{quarantined ? <span className="quarantined-label">Quarantined</span> : <button className="row-action-button" type="button" onClick={() => updateItem(item.id, { status: 'Quarantined' })}>Quarantine / Remove</button>}</td>}
+            </tr>;
+          })}</tbody>
+        </table>}
+      </div>}
+    </section>
+  </div>;
 }

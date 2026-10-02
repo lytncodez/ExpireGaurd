@@ -1,5 +1,9 @@
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { ImagePlus, Pill } from 'lucide-react';
 import { useInventory } from '../api/useInventory';
+import { formatGhc } from '../utils/currency';
+import { useAuth } from '../api/useAuth';
 
 function getRisk(expiryDate: string, nowTimestamp: number): { label: string; badgeClass: string } {
   const exp = new Date(expiryDate).getTime();
@@ -14,7 +18,10 @@ function getRisk(expiryDate: string, nowTimestamp: number): { label: string; bad
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { items, deleteItem } = useInventory();
+  const { items, deleteItem, updateItem } = useInventory();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [photoError, setPhotoError] = useState('');
   const nowTimestamp = Date.now();
 
   const item = items.find(i => i.id === id);
@@ -48,17 +55,61 @@ export default function ItemDetail() {
     }
   };
 
+  const handlePhotoUpload = (file?: File) => {
+    if (!file) return;
+    setPhotoError('');
+    if (!file.type.startsWith('image/')) {
+      setPhotoError('Choose an image file to attach a product photo.');
+      return;
+    }
+    const imageUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const maxEdge = 1200;
+      const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext('2d');
+      if (!context) {
+        setPhotoError('This image could not be processed. Try another photo.');
+        URL.revokeObjectURL(imageUrl);
+        return;
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      updateItem(item.id, { photoUrl: canvas.toDataURL('image/jpeg', 0.82) });
+      URL.revokeObjectURL(imageUrl);
+    };
+    image.onerror = () => {
+      setPhotoError('This image could not be opened. Try another photo.');
+      URL.revokeObjectURL(imageUrl);
+    };
+    image.src = imageUrl;
+  };
+
   return (
     <div className="page-body">
       <div className="card-container form-card">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-card)', paddingBottom: '1rem' }}>
-          <div>
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-              Batch &amp; Product Details
-            </span>
-            <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '0.2rem' }}>
-              {item.name}
-            </h1>
+          <div className="detail-product-heading">
+            <div className="detail-product-photo">
+              {item.photoUrl ? <img src={item.photoUrl} alt={`${item.name} product`} /> : <Pill size={30} strokeWidth={1.7} aria-hidden="true" />}
+              <label className="detail-photo-upload" title={item.photoUrl ? 'Change product photo' : 'Upload product photo'}>
+                <ImagePlus size={15} />
+                <span>{item.photoUrl ? 'Change photo' : 'Add photo'}</span>
+                <input type="file" accept="image/*" onChange={event => handlePhotoUpload(event.target.files?.[0])} aria-label="Upload product photo" />
+              </label>
+            </div>
+            <div>
+              <span style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                Batch &amp; Product Details
+              </span>
+              <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '0.2rem' }}>
+                {item.name}
+              </h1>
+              <p className="detail-product-category">{item.category}</p>
+              {photoError && <p className="detail-photo-error" role="alert">{photoError}</p>}
+            </div>
           </div>
           <span className={`risk-badge ${risk.badgeClass}`}>
             <span className="risk-badge-dot" />
@@ -82,15 +133,15 @@ export default function ItemDetail() {
                 <td style={{ fontWeight: 700, fontSize: '1.1rem' }}>{item.quantity} units</td>
               </tr>
               <tr>
-                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Unit Price</td>
-                <td style={{ fontWeight: 600 }}>${item.unitPrice.toFixed(2)}</td>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>{isAdmin ? 'Unit Cost (GH₵)' : 'Selling Price (GH₵)'}</td>
+                <td style={{ fontWeight: 600 }}>{formatGhc(item.unitPrice)}</td>
               </tr>
-              <tr>
-                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Stock Value at Risk</td>
+              {isAdmin && <tr>
+                <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Stock Value at Risk (GH₵)</td>
                 <td style={{ fontWeight: 700, color: totalValueAtRisk > 0 ? '#7C3AED' : 'var(--text-muted)' }}>
-                  {totalValueAtRisk > 0 ? `$${totalValueAtRisk.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '$0.00 (Safe)'}
+                  {totalValueAtRisk > 0 ? formatGhc(totalValueAtRisk) : `${formatGhc(0)} (Safe)`}
                 </td>
-              </tr>
+              </tr>}
               <tr>
                 <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Expiry Date</td>
                 <td>{new Date(item.expiryDate).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}</td>
@@ -101,10 +152,10 @@ export default function ItemDetail() {
                   {diffDays < 0 ? `Expired ${Math.abs(diffDays)} days ago` : `${diffDays} days remaining`}
                 </td>
               </tr>
-              <tr>
+              {isAdmin && <tr>
                 <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Supplier / Vendor</td>
                 <td>{item.supplier}</td>
-              </tr>
+              </tr>}
               <tr>
                 <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Warehouse Location</td>
                 <td>
@@ -137,13 +188,13 @@ export default function ItemDetail() {
             </svg>
             Back to Catalog
           </button>
-          <button className="btn-danger" onClick={handleDelete}>
+          {isAdmin && <button className="btn-danger" onClick={handleDelete}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="3 6 5 6 21 6" />
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             </svg>
             Delete Item
-          </button>
+          </button>}
         </div>
       </div>
     </div>

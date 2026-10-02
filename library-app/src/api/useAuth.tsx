@@ -4,7 +4,7 @@ interface User {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'manager' | 'viewer';
+  role: 'admin' | 'dispenser';
   avatar?: string;
 }
 
@@ -15,6 +15,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
+  updateUserRole: (email: string, role: 'admin' | 'dispenser') => void;
   forgotPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -34,7 +35,14 @@ const DEMO_USERS: Array<User & { password: string }> = [
     name: 'Jane Manager',
     email: 'manager@expireguard.com',
     password: 'manager123',
-    role: 'manager',
+    role: 'dispenser',
+  },
+  {
+    id: 'user-003',
+    name: 'Jane Dispenser',
+    email: 'dispenser@expireguard.com',
+    password: 'dispenser123',
+    role: 'dispenser',
   },
 ];
 
@@ -43,7 +51,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem('expireguard_user');
     if (saved) {
       try {
-        return JSON.parse(saved) as User;
+        const parsed = JSON.parse(saved) as User;
+        const overrides = JSON.parse(localStorage.getItem('expireguard_role_overrides') || '{}') as Record<string, 'admin' | 'dispenser'>;
+        return { ...parsed, role: overrides[parsed.email.toLowerCase()] || (parsed.role === 'admin' ? 'admin' : 'dispenser') };
       } catch {
         return null;
       }
@@ -60,6 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const found = DEMO_USERS.find(u => u.email === email && u.password === password);
     if (found) {
       const { password: _pw, ...safeUser } = found;
+      const overrides = JSON.parse(localStorage.getItem('expireguard_role_overrides') || '{}') as Record<string, 'admin' | 'dispenser'>;
+      safeUser.role = overrides[safeUser.email.toLowerCase()] || safeUser.role;
       setUser(safeUser);
       localStorage.setItem('expireguard_user', JSON.stringify(safeUser));
       setIsLoading(false);
@@ -83,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       id: `user-${Date.now()}`,
       name,
       email,
-      role: 'viewer',
+      role: 'dispenser',
     };
 
     setUser(newUser);
@@ -95,6 +107,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null);
     localStorage.removeItem('expireguard_user');
+  };
+
+  const updateUserRole = (email: string, role: 'admin' | 'dispenser') => {
+    const overrides = JSON.parse(localStorage.getItem('expireguard_role_overrides') || '{}') as Record<string, 'admin' | 'dispenser'>;
+    overrides[email.toLowerCase()] = role;
+    localStorage.setItem('expireguard_role_overrides', JSON.stringify(overrides));
+    setUser(current => {
+      if (!current || current.email.toLowerCase() !== email.toLowerCase()) return current;
+      const updated = { ...current, role };
+      localStorage.setItem('expireguard_user', JSON.stringify(updated));
+      return updated;
+    });
   };
 
   const forgotPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
@@ -118,6 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         signup,
         logout,
+        updateUserRole,
         forgotPassword,
       }}
     >

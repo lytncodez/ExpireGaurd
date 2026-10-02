@@ -120,6 +120,7 @@ export default function SignIn() {
           <div className="auth-demo-box">
             <strong>Quick Demo Login:</strong>
             <code>admin@expireguard.com / admin123</code>
+            <code>dispenser@expireguard.com / dispenser123</code>
           </div>
         </div>
       </div>

@@ -62,6 +62,7 @@ export default function MobileBottomNav() {
         <span className="mobile-nav-label">Alerts</span>
       </NavLink>
 
+      {isAdmin && <>
       <NavLink
         to="/reports"
         className={({ isActive }) => `mobile-nav-item ${isActive ? 'active' : ''}`}
@@ -86,6 +87,7 @@ export default function MobileBottomNav() {
         </span>
         <span className="mobile-nav-label">Insights</span>
       </NavLink>
+      </>}
 
       {isAdmin && (
         <NavLink

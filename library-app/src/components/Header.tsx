@@ -24,7 +24,7 @@ export default function Header({ searchTerm, setSearchTerm }: HeaderProps) {
           </svg>
           <input
             type="text"
-            placeholder="Search products, batches, suppliers..."
+            placeholder={user?.role === 'admin' ? 'Search products, batches, suppliers...' : 'Search products and batches...'}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="search-input"

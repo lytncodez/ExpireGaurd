@@ -1,6 +1,7 @@
 ﻿import { useMemo } from 'react';
 import {
   AlertTriangle,
+  ArrowUpRight,
   Clock3,
   DollarSign,
   Package,
@@ -11,6 +12,12 @@ import {
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useInventory } from '../api/useInventory';
+import StatCard from '../components/StatCard';
+import { formatGhc } from '../utils/currency';
+import { useAuth } from '../api/useAuth';
 
 interface DashboardProps {
   quantityFilter: number;
@@ -31,13 +38,6 @@ interface ActionItem {
   risk: RiskLevel;
   action: string;
 }
-
-const currencyFormatter = new Intl.NumberFormat('en-GH', {
-  style: 'currency',
-  currency: 'GHS',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
 
 const actionItems: ActionItem[] = [
   {
@@ -115,75 +115,83 @@ const kpis = [
     title: 'Total Products',
     value: '4,250',
     helper: 'Across 18 active SKUs',
-    accent: '#60a5fa',
-    tone: 'rgba(96, 165, 250, 0.12)',
+    tone: 'navy' as const,
     Icon: Package,
   },
   {
     title: 'Total Stock Value',
-    value: 'GHS 184,200',
+    value: formatGhc(184200),
     helper: 'Current inventory valuation',
-    accent: '#38bdf8',
-    tone: 'rgba(56, 189, 248, 0.12)',
+    tone: 'indigo' as const,
     Icon: DollarSign,
   },
   {
     title: 'Near-Expiry Products',
     value: '137',
     helper: 'Within 60-day risk window',
-    accent: '#fbbf24',
-    tone: 'rgba(251, 191, 36, 0.12)',
+    tone: 'monitor' as const,
     Icon: Clock3,
   },
   {
     title: 'High-Risk Products',
     value: '32',
     helper: 'Requires intervention',
-    accent: '#f97316',
-    tone: 'rgba(249, 115, 22, 0.12)',
+    tone: 'action' as const,
     Icon: AlertTriangle,
   },
   {
     title: 'Expired Products',
     value: '8',
     helper: 'Immediate disposal queue',
-    accent: '#f87171',
-    tone: 'rgba(248, 113, 113, 0.12)',
+    tone: 'expired' as const,
     Icon: ShieldAlert,
   },
   {
     title: 'Stock Value at Expiry Risk',
-    value: 'GHS 12,450',
+    value: formatGhc(12450),
     helper: 'Exposure from expiring stock',
-    accent: '#fb7185',
-    tone: 'rgba(251, 113, 133, 0.12)',
+    tone: 'critical' as const,
     Icon: TrendingDown,
   },
   {
     title: 'Fast-Moving Products',
     value: '245',
     helper: 'High turnover inventory',
-    accent: '#34d399',
-    tone: 'rgba(52, 211, 153, 0.12)',
+    tone: 'safe' as const,
     Icon: TrendingUp,
   },
   {
     title: 'Slow-Moving Products',
     value: '418',
     helper: 'Needs demand review',
-    accent: '#94a3b8',
-    tone: 'rgba(148, 163, 184, 0.12)',
+    tone: 'teal' as const,
     Icon: TrendingDown,
   },
 ];
 
-const riskBadgeStyles: Record<RiskLevel, { bg: string; border: string; color: string }> = {
-  Critical: { bg: 'rgba(239, 68, 68, 0.12)', border: 'rgba(239, 68, 68, 0.3)', color: '#fca5a5' },
-  'High Risk': { bg: 'rgba(249, 115, 22, 0.12)', border: 'rgba(249, 115, 22, 0.3)', color: '#fdba74' },
-  Monitor: { bg: 'rgba(245, 158, 11, 0.12)', border: 'rgba(245, 158, 11, 0.3)', color: '#fcd34d' },
-};
-
 export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: DashboardProps) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const { items } = useInventory();
+  const [spotlightIndex, setSpotlightIndex] = useState(0);
+  const [spotlightPaused, setSpotlightPaused] = useState(false);
+  const spotlightItems = useMemo(() => (items || [])
+    .filter(item => item.status !== 'Quarantined')
+    .slice()
+    .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime()), [items]);
+  const spotlightItem = spotlightItems.length ? spotlightItems[spotlightIndex % spotlightItems.length] : undefined;
+  const spotlightDaysLeft = spotlightItem ? Math.floor((new Date(spotlightItem.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 0;
+
+  useEffect(() => {
+    if (spotlightPaused || spotlightItems.length < 2) return;
+    const timer = window.setInterval(() => setSpotlightIndex(index => (index + 1) % spotlightItems.length), 4500);
+    return () => window.clearInterval(timer);
+  }, [spotlightPaused, spotlightItems.length]);
+
+  useEffect(() => {
+    setSpotlightIndex(index => spotlightItems.length ? index % spotlightItems.length : 0);
+  }, [spotlightItems.length]);
+
   const filteredRows = useMemo(() => {
     const normalizedTerm = (searchTerm || '').trim().toLowerCase();
     const stockLimit = Number.isFinite(quantityFilter) ? quantityFilter : 1000;
@@ -309,48 +317,26 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
           </div>
         </header>
 
-        <section style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '1rem', marginBottom: '1.25rem' }}>
-          {kpis.map(({ title, value, helper, accent, tone, Icon }) => (
-            <div
-              key={title}
-              style={{
-                position: 'relative',
-                overflow: 'hidden',
-                background: '#0f172a',
-                border: '1px solid #1e293b',
-                borderRadius: '16px',
-                padding: '1rem 1.05rem',
-                boxShadow: '0 12px 28px rgba(15, 23, 42, 0.2)',
-              }}
-            >
-              <div style={{ position: 'absolute', inset: 0, background: tone, opacity: 0.9 }} />
-              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.9rem' }}>
-                <span style={{ color: '#94a3b8', fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700 }}>
-                  {title}
-                </span>
-                <span
-                  style={{
-                    width: '38px',
-                    height: '38px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: '12px',
-                    background: tone,
-                    border: `1px solid ${accent}40`,
-                    color: accent,
-                  }}
-                >
-                  <Icon size={18} />
-                </span>
+        {spotlightItem && <section className="product-spotlight" onPointerEnter={() => setSpotlightPaused(true)} onPointerLeave={() => setSpotlightPaused(false)} aria-label="Product spotlight">
+          <div key={spotlightItem.id} className="product-spotlight-image" style={spotlightItem.photoUrl ? { backgroundImage: `url("${spotlightItem.photoUrl}")` } : undefined}>
+            {!spotlightItem.photoUrl && <div className="product-spotlight-placeholder" aria-hidden="true"><Package size={78} strokeWidth={1.1} /></div>}
+            <div className="product-spotlight-shade" />
+            <div className="product-spotlight-content">
+              <span className="product-spotlight-eyebrow">PRODUCT SPOTLIGHT</span>
+              <h2>{spotlightItem.name}</h2>
+              <p>{spotlightItem.category}</p>
+              <div className="product-spotlight-stats">
+                <span className="product-stat-pill"><Package size={15} /><strong>{spotlightItem.quantity.toLocaleString()}</strong> in stock</span>
+                <span className={`product-stat-pill ${spotlightDaysLeft <= 30 ? 'is-at-risk' : ''}`}><Clock3 size={15} /><strong>{spotlightDaysLeft < 0 ? `${Math.abs(spotlightDaysLeft)}d overdue` : `${spotlightDaysLeft} days`}</strong> to expiry</span>
               </div>
-
-              <div style={{ position: 'relative', fontSize: '2rem', lineHeight: 1.2, fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.04em' }}>
-                {value}
-              </div>
-
-              <div style={{ position: 'relative', marginTop: '0.45rem', color: '#94a3b8', fontSize: '0.8rem' }}>{helper}</div>
             </div>
+            <Link className="product-spotlight-view" to={`/inventory/${spotlightItem.id}`} aria-label={`View ${spotlightItem.name}`} title="View product details"><ArrowUpRight size={20} /></Link>
+          </div>
+        </section>}
+
+        <section className="stat-card-grid dashboard-stat-grid">
+          {kpis.filter(metric => isAdmin || !metric.title.toLowerCase().includes('value')).map(({ title, value, helper, tone, Icon }) => (
+            <StatCard key={title} label={title} value={value} context={helper} icon={Icon} tone={tone} />
           ))}
         </section>
 
@@ -364,22 +350,11 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
             </div>
 
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '980px' }}>
+              <table className="modern-table dashboard-inventory-table" style={{ minWidth: '980px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid #1e293b' }}>
-                    {['Product & Category', 'Batch # / Location', 'Stock Qty & Value at Risk', 'Expiry Countdown', 'Risk Level', 'Recommended Action', 'Action'].map(header => (
-                      <th
-                        key={header}
-                        style={{
-                          textAlign: 'left',
-                          padding: '0.7rem 0.55rem',
-                          color: '#94a3b8',
-                          fontSize: '0.72rem',
-                          fontWeight: 700,
-                          letterSpacing: '0.08em',
-                          textTransform: 'uppercase',
-                        }}
-                      >
+                    {['Product & Category', 'Batch # / Location', isAdmin ? 'Stock Qty & Value at Risk' : 'Stock Quantity', 'Expiry Countdown', 'Risk Level', 'Recommended Action', 'Action'].map(header => (
+                      <th key={header}>
                         {header}
                       </th>
                     ))}
@@ -387,79 +362,46 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
                 </thead>
                 <tbody>
                   {filteredRows.map(item => (
-                    <tr key={`${item.batch}-${item.product}`} style={{ borderBottom: '1px solid #1e293b' }}>
-                      <td style={{ padding: '0.9rem 0.55rem' }}>
-                        <div style={{ color: '#f8fafc', fontWeight: 700 }}>{item.product}</div>
-                        <div style={{ color: '#94a3b8', fontSize: '0.76rem', marginTop: '0.25rem' }}>{item.category}</div>
+                    <tr key={`${item.batch}-${item.product}`}>
+                      <td>
+                        <div className="dashboard-cell-primary">{item.product}</div>
+                        <div className="dashboard-cell-muted">{item.category}</div>
                       </td>
 
-                      <td style={{ padding: '0.9rem 0.55rem', color: '#e2e8f0' }}>
-                        <div style={{ fontWeight: 700 }}>{item.batch}</div>
-                        <div style={{ color: '#94a3b8', fontSize: '0.76rem', marginTop: '0.2rem' }}>{item.location}</div>
+                      <td>
+                        <div className="dashboard-cell-primary">{item.batch}</div>
+                        <div className="dashboard-cell-muted">{item.location}</div>
                       </td>
 
-                      <td style={{ padding: '0.9rem 0.55rem' }}>
-                        <div style={{ color: '#f8fafc', fontWeight: 700 }}>{item.stock} units</div>
-                        <div style={{ color: '#94a3b8', fontSize: '0.76rem', marginTop: '0.2rem' }}>
-                          {currencyFormatter.format(item.value)}
-                        </div>
+                      <td>
+                        <div className="dashboard-cell-primary">{item.stock} units</div>
+                        {isAdmin && <div className="dashboard-cell-muted">{formatGhc(item.value)}</div>}
                       </td>
 
-                      <td style={{ padding: '0.9rem 0.55rem' }}>
-                        <div style={{ color: '#f8fafc', fontWeight: 700 }}>
+                      <td>
+                        <div className="dashboard-cell-primary">
                           {item.daysLeft <= 0 ? `${Math.abs(item.daysLeft)} days overdue` : `${item.daysLeft} days left`}
                         </div>
-                        <div style={{ color: '#94a3b8', fontSize: '0.76rem', marginTop: '0.2rem' }}>Expiry countdown</div>
+                        <div className="dashboard-cell-muted">Expiry countdown</div>
                       </td>
 
-                      <td style={{ padding: '0.9rem 0.55rem' }}>
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            borderRadius: '999px',
-                            padding: '0.38rem 0.7rem',
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            background: riskBadgeStyles[item.risk].bg,
-                            border: `1px solid ${riskBadgeStyles[item.risk].border}`,
-                            color: riskBadgeStyles[item.risk].color,
-                          }}
-                        >
-                          {item.risk}
+                      <td>
+                        <span className={`risk-badge ${item.risk === 'High Risk' ? 'risk-badge--action' : `risk-badge--${item.risk.toLowerCase()}`}`}>
+                          <span className="risk-badge-dot" />
+                          {item.risk === 'High Risk' ? 'Action Required' : item.risk}
                         </span>
                       </td>
 
-                      <td style={{ padding: '0.9rem 0.55rem' }}>
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            borderRadius: '999px',
-                            padding: '0.38rem 0.7rem',
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            background: 'rgba(15, 23, 42, 0.9)',
-                            border: '1px solid #334155',
-                            color: '#e2e8f0',
-                          }}
-                        >
+                      <td>
+                        <span className="dashboard-action-label">
                           {item.action}
                         </span>
                       </td>
 
-                      <td style={{ padding: '0.9rem 0.55rem' }}>
+                      <td>
                         <button
                           type="button"
-                          style={{
-                            border: 'none',
-                            borderRadius: '10px',
-                            background: '#2563eb',
-                            color: '#f8fafc',
-                            padding: '0.55rem 0.9rem',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                          }}
+                          className="row-action-button"
                         >
                           Execute
                         </button>
@@ -520,7 +462,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
             <div style={{ marginTop: '1.25rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.7rem' }}>
                 <p style={{ margin: 0, color: '#f8fafc', fontSize: '1rem', fontWeight: 800 }}>Expiry Risk Horizon</p>
-                <small style={{ color: '#94a3b8' }}>{totalRiskValue}% inventory value</small>
+                {isAdmin && <small style={{ color: '#94a3b8' }}>{totalRiskValue}% inventory value</small>}
               </div>
 
               {riskDistribution.map(item => (

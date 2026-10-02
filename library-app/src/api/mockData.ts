@@ -10,6 +10,9 @@ export interface InventoryItem {
   unitCostGhs?: number;
   sellingPriceGhs?: number;
   expiryDate: string;
+  manufacturingDate?: string;
+  dateReceived?: string;
+  photoUrl?: string;
   daysToExpiry?: number;
   supplier?: string;
   location?: string;
@@ -35,6 +38,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 18.5,
     sellingPriceGhs: 28.0,
     expiryDate: new Date(Date.now() + 23 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 180 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 90 * dayMs).toISOString(),
     daysToExpiry: 23,
     supplier: 'PharmaCorp Inc.',
     location: 'Aisle A1 - Shelf 2',
@@ -56,6 +61,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 8.75,
     sellingPriceGhs: 15.5,
     expiryDate: new Date(Date.now() - 5 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 400 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 200 * dayMs).toISOString(),
     daysToExpiry: -5,
     supplier: 'MediSupply Co.',
     location: 'Bay B3 - Rack 1',
@@ -77,6 +84,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 4.2,
     sellingPriceGhs: 7.0,
     expiryDate: new Date(Date.now() + 3 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 240 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 120 * dayMs).toISOString(),
     daysToExpiry: 3,
     supplier: 'Global Health Ltd.',
     location: 'Aisle C2 - Shelf 4',
@@ -98,6 +107,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 24,
     sellingPriceGhs: 36.0,
     expiryDate: new Date(Date.now() + 28 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 300 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 150 * dayMs).toISOString(),
     daysToExpiry: 28,
     supplier: 'Apex LifeSciences',
     location: 'Aisle A3 - Shelf 1',
@@ -119,6 +130,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 12,
     sellingPriceGhs: 18.5,
     expiryDate: new Date(Date.now() + 45 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 160 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 80 * dayMs).toISOString(),
     daysToExpiry: 45,
     supplier: 'NutraVital Labs',
     location: 'Bay D1 - Rack 3',
@@ -140,6 +153,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 15,
     sellingPriceGhs: 24.0,
     expiryDate: new Date(Date.now() + 6 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 320 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 160 * dayMs).toISOString(),
     daysToExpiry: 6,
     supplier: 'BioDiagnostics Tech',
     location: 'Cold Storage C1',
@@ -161,6 +176,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 32.5,
     sellingPriceGhs: 46.0,
     expiryDate: new Date(Date.now() + 120 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 220 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 110 * dayMs).toISOString(),
     daysToExpiry: 120,
     supplier: 'PharmaCorp Inc.',
     location: 'Aisle B1 - Shelf 3',
@@ -182,6 +199,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 85,
     sellingPriceGhs: 120.0,
     expiryDate: new Date(Date.now() + 18 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 260 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 130 * dayMs).toISOString(),
     daysToExpiry: 18,
     supplier: 'BioLab Global',
     location: 'Cold Storage C2',
@@ -203,6 +222,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 9.8,
     sellingPriceGhs: 16.0,
     expiryDate: new Date(Date.now() + 52 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 140 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 70 * dayMs).toISOString(),
     daysToExpiry: 52,
     supplier: 'MediSupply Co.',
     location: 'Bay A2 - Rack 2',
@@ -224,6 +245,8 @@ export const mockItems: InventoryItem[] = [
     unitCostGhs: 6.5,
     sellingPriceGhs: 10.5,
     expiryDate: new Date(Date.now() - 14 * dayMs).toISOString(),
+    manufacturingDate: new Date(Date.now() - 500 * dayMs).toISOString(),
+    dateReceived: new Date(Date.now() - 250 * dayMs).toISOString(),
     daysToExpiry: -14,
     supplier: 'Global Health Ltd.',
     location: 'Warehouse Box W4',

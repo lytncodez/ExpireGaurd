@@ -17,7 +17,7 @@ const mockInsights: InsightItem[] = [
     type: 'expiring',
     title: 'Items Nearing Expiry Window',
     tag: 'CRITICAL EXPIRY',
-    metric: '3 items expiring in ≤7 days ($1,240 value)',
+    metric: '3 items expiring in ≤7 days (GH₵1,240.00 value)',
     recommendation: 'Initiate priority FEFO dispensing or negotiate supplier credit return before Friday.',
     severity: 'high',
     category: 'Recommendations',

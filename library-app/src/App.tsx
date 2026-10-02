@@ -76,6 +76,11 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function AdminRoute({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return user?.role === 'admin' ? <>{children}</> : <Navigate to="/dashboard" replace />;
+}
+
 // ─── Authenticated App Shell ─────────────────────────────────────────────────
 function AppShell() {
   const [quantityFilter, setQuantityFilter] = useState<number>(() => {
@@ -121,29 +126,28 @@ function AppShell() {
         <Header searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
 
         <Routes>
-          <Route index element={
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={
             <Dashboard
               quantityFilter={quantityFilter}
               expiryFilter={expiryFilter}
               searchTerm={searchTerm}
             />
           } />
-          <Route path="inventory" element={
+          <Route path="/inventory" element={
             <InventoryList
-              quantityFilter={quantityFilter}
-              expiryFilter={expiryFilter}
               searchTerm={searchTerm}
             />
           } />
-          <Route path="inventory/:id" element={<ItemDetail />} />
-          <Route path="add" element={<AddItem />} />
-          <Route path="alerts" element={<Alerts searchTerm={searchTerm} />} />
-          <Route path="reports" element={<Reports />} />
-          <Route path="insights" element={<Insights />} />
-          <Route path="settings" element={<Settings />} />
+          <Route path="/inventory/:id" element={<ItemDetail />} />
+          <Route path="/add" element={<AddItem />} />
+          <Route path="/alerts" element={<Alerts searchTerm={searchTerm} />} />
+          <Route path="/reports" element={<AdminRoute><Reports /></AdminRoute>} />
+          <Route path="/insights" element={<AdminRoute><Insights /></AdminRoute>} />
+          <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
 
           {/* Fallback for authenticated users */}
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
 
         {/* Persistent bottom tab bar for mobile viewports */}
@@ -166,13 +170,7 @@ function AppRouter() {
       <Route path="/forgot-password" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <ForgotPassword />} />
 
       {/* Protected app routes */}
-      <Route path="/dashboard/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
-      <Route path="/inventory/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
-      <Route path="/add/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
-      <Route path="/alerts/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
-      <Route path="/reports/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
-      <Route path="/insights/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
-      <Route path="/settings/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
+      <Route path="/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />
 
       {/* Catch-all */}
       <Route path="*" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Navigate to="/" replace />} />

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { formatGhc } from '../utils/currency';
 import '../styles/landing.css';
 
 const navItems = ['How It Works', 'Features', 'Pricing', 'About'];
@@ -76,7 +77,7 @@ const storyCards = [
 
 const impactStats = [
   { value: '1,200+', label: 'Pharmacies onboarded', icon: 'pharmacy' },
-  { value: 'GH₵2.4M', label: 'Stock value protected', icon: 'shield' },
+  { value: formatGhc(2400000), label: 'Stock value protected', icon: 'shield' },
   { value: '48K', label: 'Alerts sent', icon: 'bell' },
   { value: '31%', label: 'Avg. waste reduction', icon: 'trend' },
 ];
@@ -389,7 +390,7 @@ export default function Landing() {
                         <div className="preview-report-stack">
                           <div className="report-card">
                             <span>Stock value</span>
-                            <strong>GH₵ 146,200</strong>
+                            <strong>{formatGhc(146200)}</strong>
                           </div>
                           <div className="report-mini-segment">
                             <span className="mini-line mini-line-1" />

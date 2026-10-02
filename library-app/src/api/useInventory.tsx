@@ -1,5 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { mockItems, type InventoryItem } from './mockData';
+import { useAuth } from './useAuth';
 
 interface InventoryContextType {
   items: InventoryItem[];
@@ -7,6 +8,7 @@ interface InventoryContextType {
   error: string | null;
   addItem: (item: Omit<InventoryItem, 'id'>) => void;
   deleteItem: (id: string) => void;
+  updateItem: (id: string, updates: Partial<InventoryItem>) => void;
   resetToMock: () => void;
 }
 
@@ -26,6 +28,9 @@ function sanitizeItems(parsed: any[]): InventoryItem[] {
     unitCostGhs: typeof item.unitCostGhs === 'number' && !isNaN(item.unitCostGhs) ? item.unitCostGhs : (typeof item.unitPrice === 'number' ? item.unitPrice : 10.0),
     sellingPriceGhs: typeof item.sellingPriceGhs === 'number' && !isNaN(item.sellingPriceGhs) ? item.sellingPriceGhs : undefined,
     expiryDate: item.expiryDate || new Date().toISOString(),
+    manufacturingDate: item.manufacturingDate || undefined,
+    dateReceived: item.dateReceived || undefined,
+    photoUrl: typeof item.photoUrl === 'string' ? item.photoUrl : undefined,
     daysToExpiry: typeof item.daysToExpiry === 'number' ? item.daysToExpiry : undefined,
     supplier: String(item.supplier || 'PharmaCorp Inc.'),
     location: String(item.location || item.storageLocation || 'Aisle A1 - Shelf 1'),
@@ -38,6 +43,7 @@ function sanitizeItems(parsed: any[]): InventoryItem[] {
 }
 
 export function InventoryProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [items, setItems] = useState<InventoryItem[]>(() => {
     const saved = localStorage.getItem('expireguard_items');
     if (saved) {
@@ -63,15 +69,27 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   }, [items]);
 
   const addItem = (item: Omit<InventoryItem, 'id'>) => {
+    const entry = user?.role === 'admin' ? item : {
+      ...item,
+      unitPrice: 0,
+      unitCostGhs: undefined,
+      supplier: undefined,
+      dateReceived: undefined,
+    };
     const newItem: InventoryItem = {
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      ...item,
+      ...entry,
     };
     setItems(prev => [newItem, ...prev]);
   };
 
   const deleteItem = (id: string) => {
+    if (user?.role !== 'admin') return;
     setItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  const updateItem = (id: string, updates: Partial<InventoryItem>) => {
+    setItems(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
   };
 
   const resetToMock = () => {
@@ -79,8 +97,16 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     setItems(mockItems);
   };
 
+  const roleScopedItems = useMemo(() => user?.role === 'admin' ? items : items.map(item => ({
+    ...item,
+    unitPrice: item.sellingPriceGhs ?? 0,
+    unitCostGhs: undefined,
+    supplier: undefined,
+    dateReceived: undefined,
+  })), [items, user?.role]);
+
   return (
-    <InventoryContext.Provider value={{ items, loading, error, addItem, deleteItem, resetToMock }}>
+    <InventoryContext.Provider value={{ items: roleScopedItems, loading, error, addItem, deleteItem, updateItem, resetToMock }}>
       {children}
     </InventoryContext.Provider>
   );

@@ -1,11 +1,17 @@
 import { useState, useMemo } from 'react';
+import { AlertTriangle, Bell, Clock3, ShieldAlert } from 'lucide-react';
 import { useInventory } from '../api/useInventory';
+import StatCard from '../components/StatCard';
+import { formatGhc } from '../utils/currency';
+import { useAuth } from '../api/useAuth';
 
 interface AlertsProps {
   searchTerm?: string;
 }
 
 export default function Alerts({ searchTerm = '' }: AlertsProps) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const { items } = useInventory();
   const now = Date.now();
 
@@ -146,6 +152,13 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
         </div>
       </div>
 
+      <div className="stat-card-grid alerts-stat-grid">
+        <StatCard label="Active Alerts" value={alertsList.length} context="Across all non-safe batches" icon={Bell} tone="navy" />
+        <StatCard label="Critical" value={alertsList.filter(alert => alert.riskBand === 'Critical').length} context="Expiring within 7 days" icon={AlertTriangle} tone="critical" />
+        <StatCard label="Near Expiry" value={alertsList.filter(alert => alert.riskBand === 'Expiring Soon').length} context="Within the 90-day watch window" icon={Clock3} tone="monitor" />
+        <StatCard label="Expired" value={alertsList.filter(alert => alert.riskBand === 'Expired').length} context="Requires quarantine or disposal" icon={ShieldAlert} tone="expired" />
+      </div>
+
       {/* Filter Tabs (All / Critical / Expiring Soon / Expired) */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
         {(['All', 'Critical', 'Expiring Soon', 'Expired'] as const).map(tab => {
@@ -252,10 +265,10 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
                       <span style={{ fontSize: '0.68rem', color: '#8E9BAE', display: 'block', fontWeight: 600 }}>STOCK UNITS</span>
                       <strong style={{ fontSize: '0.88rem', color: '#1E3A4C' }}>{alert.quantity} units</strong>
                     </div>
-                    <div>
+                    {isAdmin && <div>
                       <span style={{ fontSize: '0.68rem', color: '#8E9BAE', display: 'block', fontWeight: 600 }}>VALUE AT RISK</span>
-                      <strong style={{ fontSize: '0.88rem', color: '#1E3A4C' }}>${alert.valueAtRisk.toFixed(2)}</strong>
-                    </div>
+                      <strong style={{ fontSize: '0.88rem', color: '#1E3A4C' }}>{formatGhc(alert.valueAtRisk)}</strong>
+                    </div>}
                     <div>
                       <span style={{ fontSize: '0.68rem', color: '#8E9BAE', display: 'block', fontWeight: 600 }}>LOCATION</span>
                       <strong style={{ fontSize: '0.82rem', color: '#475569' }}>{alert.location}</strong>
@@ -266,17 +279,8 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #F1F5F9' }}>
                   <button
                     type="button"
+                    className="row-action-button"
                     onClick={() => toggleAcknowledge(alert.id)}
-                    style={{
-                      background: isAck ? '#ECFDF5' : '#F1F5F9',
-                      border: `1px solid ${isAck ? '#A7F3D0' : '#E2E8F0'}`,
-                      color: isAck ? '#059669' : '#475569',
-                      borderRadius: '6px',
-                      padding: '0.4rem 0.8rem',
-                      fontSize: '0.76rem',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                    }}
                   >
                     {isAck ? '✓ Acknowledged' : 'Mark Acknowledged'}
                   </button>

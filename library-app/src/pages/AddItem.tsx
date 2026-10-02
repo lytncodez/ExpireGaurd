@@ -1,11 +1,15 @@
 import { useState, useRef, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useInventory } from '../api/useInventory';
+import CurrencyInput from '../components/CurrencyInput';
+import { useAuth } from '../api/useAuth';
 
 type EntryPath = 'choice' | 'scan' | 'manual' | 'import';
 
 export default function AddItem() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const { addItem } = useInventory();
 
   // Active path state
@@ -46,9 +50,11 @@ export default function AddItem() {
       category,
       batchNo: batchNo || `BATCH-${Math.floor(1000 + Math.random() * 9000)}`,
       quantity: Number(quantity),
-      unitPrice: Number(unitPrice),
+      unitPrice: isAdmin ? Number(unitPrice) : 0,
+      unitCostGhs: isAdmin ? Number(unitPrice) : undefined,
+      sellingPriceGhs: isAdmin ? undefined : Number(unitPrice),
       expiryDate,
-      supplier: supplier || 'PharmaCorp Direct',
+      ...(isAdmin ? { supplier: supplier || 'PharmaCorp Direct' } : {}),
       location: location || 'Aisle A1 - Shelf 1',
       status,
     });
@@ -170,6 +176,10 @@ export default function AddItem() {
     batchList.forEach(b => {
       addItem({
         ...b,
+        unitPrice: isAdmin ? b.unitPrice : 0,
+        unitCostGhs: isAdmin ? b.unitPrice : undefined,
+        sellingPriceGhs: isAdmin ? undefined : b.unitPrice,
+        supplier: isAdmin ? b.supplier : undefined,
         status: b.quantity < 200 ? 'Low Stock' : 'In Stock',
       });
     });
@@ -555,15 +565,8 @@ export default function AddItem() {
                     </div>
 
                     <div>
-                      <label className="form-label">Cost / Unit Price (GH₵)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={unitPrice}
-                        onChange={e => setUnitPrice(Number(e.target.value))}
-                        className="form-input"
-                        required
-                      />
+                      <label className="form-label">{isAdmin ? 'Unit Cost' : 'Selling Price'}</label>
+                      <CurrencyInput value={unitPrice} onChange={setUnitPrice} className="form-input" required />
                     </div>
 
                     <div>
@@ -577,7 +580,7 @@ export default function AddItem() {
                       />
                     </div>
 
-                    <div>
+                    {isAdmin && <div>
                       <label className="form-label">Supplier</label>
                       <input
                         type="text"
@@ -585,7 +588,7 @@ export default function AddItem() {
                         onChange={e => setSupplier(e.target.value)}
                         className="form-input"
                       />
-                    </div>
+                    </div>}
 
                     <div>
                       <label className="form-label">Dispensary Location</label>
@@ -691,18 +694,8 @@ export default function AddItem() {
                 </div>
 
                 <div>
-                  <label htmlFor="m-price" className="form-label">Unit Cost / Price (GH₵) *</label>
-                  <input
-                    id="m-price"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="18.50"
-                    value={unitPrice}
-                    onChange={e => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                    className="form-input"
-                    required
-                  />
+                  <label htmlFor="m-price" className="form-label">{isAdmin ? 'Unit Cost *' : 'Selling Price *'}</label>
+                  <CurrencyInput id="m-price" value={unitPrice} onChange={setUnitPrice} className="form-input" placeholder="18.50" min={0} required />
                 </div>
 
                 <div>
@@ -728,7 +721,7 @@ export default function AddItem() {
                   />
                 </div>
 
-                <div>
+                {isAdmin && <div>
                   <label htmlFor="m-sup" className="form-label">Supplier / Distributor</label>
                   <input
                     id="m-sup"
@@ -738,7 +731,7 @@ export default function AddItem() {
                     onChange={e => setSupplier(e.target.value)}
                     className="form-input"
                   />
-                </div>
+                </div>}
 
                 <div>
                   <label htmlFor="m-loc" className="form-label">Dispensary Storage Location</label>

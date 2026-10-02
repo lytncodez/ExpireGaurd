@@ -5,7 +5,7 @@ interface UserRecord {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'pharmacist' | 'staff';
+  role: 'admin' | 'dispenser';
   status: 'active' | 'inactive';
   lastActive: string;
 }
@@ -37,17 +37,17 @@ const DEFAULT_THRESHOLDS: ThresholdSettings = {
 const INITIAL_USERS: UserRecord[] = [
   {
     id: 'u1',
-    name: 'Dr. Kwame Mensah',
-    email: 'k.mensah@pharma.com',
+    name: 'Admin User',
+    email: 'admin@expireguard.com',
     role: 'admin',
     status: 'active',
     lastActive: 'Just now',
   },
   {
     id: 'u2',
-    name: 'Amina Osei',
-    email: 'amina.osei@pharma.com',
-    role: 'pharmacist',
+    name: 'Jane Dispenser',
+    email: 'dispenser@expireguard.com',
+    role: 'dispenser',
     status: 'active',
     lastActive: '2 hours ago',
   },
@@ -55,7 +55,7 @@ const INITIAL_USERS: UserRecord[] = [
     id: 'u3',
     name: 'Kofi Boateng',
     email: 'kofi.b@pharma.com',
-    role: 'staff',
+    role: 'dispenser',
     status: 'active',
     lastActive: 'Yesterday',
   },
@@ -63,14 +63,14 @@ const INITIAL_USERS: UserRecord[] = [
     id: 'u4',
     name: 'Abena Owusu',
     email: 'abena.o@pharma.com',
-    role: 'pharmacist',
+    role: 'dispenser',
     status: 'inactive',
     lastActive: '5 days ago',
   },
 ];
 
 export default function Settings() {
-  const { user } = useAuth();
+  const { user, updateUserRole } = useAuth();
   const isAdmin = user?.role === 'admin';
 
   // Configurable thresholds stored in localStorage
@@ -91,7 +91,8 @@ export default function Settings() {
     const saved = localStorage.getItem('expireguard_users');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const savedUsers = JSON.parse(saved) as UserRecord[];
+        return savedUsers.map(savedUser => ({ ...savedUser, role: savedUser.role === 'admin' ? 'admin' : 'dispenser' }));
       } catch {
         return INITIAL_USERS;
       }
@@ -103,7 +104,7 @@ export default function Settings() {
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'admin' | 'pharmacist' | 'staff'>('pharmacist');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'dispenser'>('dispenser');
 
   // Facility info state
   const [facilityName, setFacilityName] = useState('Accra Central Pharmacy - Dispensary Unit');
@@ -154,13 +155,15 @@ export default function Settings() {
     setUsers(prev => [newUser, ...prev]);
     setNewUserName('');
     setNewUserEmail('');
-    setNewUserRole('pharmacist');
+    setNewUserRole('dispenser');
     setShowAddUser(false);
     showToast(`Staff member ${newUser.name} added successfully.`);
   };
 
-  const handleRoleChange = (id: string, newRole: 'admin' | 'pharmacist' | 'staff') => {
+  const handleRoleChange = (id: string, newRole: 'admin' | 'dispenser') => {
+    const target = users.find(u => u.id === id);
     setUsers(prev => prev.map(u => u.id === id ? { ...u, role: newRole } : u));
+    if (target) updateUserRole(target.email, newRole);
     showToast('User role updated.');
   };
 
@@ -199,7 +202,7 @@ export default function Settings() {
             Settings and risk-band threshold configurations are protected. Only administrators can alter pharmacy inventory rules and user permission assignments.
           </p>
           <div style={{ display: 'inline-block', background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '0.75rem 1.25rem', borderRadius: '10px', fontSize: '0.85rem', color: '#334155' }}>
-            Logged in as: <strong>{user?.name || 'Staff User'}</strong> ({user?.role || 'staff'})
+            Logged in as: <strong>{user?.name || 'Dispenser'}</strong> ({user?.role === 'admin' ? 'Admin' : 'Dispenser'})
           </div>
         </div>
       </div>
@@ -496,7 +499,7 @@ export default function Settings() {
               User &amp; Role Management
             </h2>
             <p style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.15rem' }}>
-              Manage dispensary staff, pharmacists, and assign administrator privileges.
+              Manage dispensers and assign administrator privileges.
             </p>
           </div>
 
@@ -552,8 +555,7 @@ export default function Settings() {
                   onChange={e => setNewUserRole(e.target.value as any)}
                   style={{ width: '100%', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '0.85rem', background: '#FFFFFF' }}
                 >
-                  <option value="staff">Staff (View inventory &amp; alerts)</option>
-                  <option value="pharmacist">Pharmacist (Add &amp; dispense stock)</option>
+                  <option value="dispenser">Dispenser (Front-of-shop stock &amp; alerts)</option>
                   <option value="admin">Admin (Full system access &amp; settings)</option>
                 </select>
               </div>
@@ -606,14 +608,13 @@ export default function Settings() {
                         fontSize: '0.8rem',
                         fontWeight: 700,
                         border: '1px solid #E2E8F0',
-                        background: u.role === 'admin' ? '#EEF2FF' : (u.role === 'pharmacist' ? '#ECFDF5' : '#F8FAFC'),
-                        color: u.role === 'admin' ? '#3B3593' : (u.role === 'pharmacist' ? '#065F46' : '#475569'),
+                        background: u.role === 'admin' ? '#EEF2FF' : '#ECFDF5',
+                        color: u.role === 'admin' ? '#3B3593' : '#065F46',
                         cursor: 'pointer',
                       }}
                     >
                       <option value="admin">Admin ⭐</option>
-                      <option value="pharmacist">Pharmacist 💊</option>
-                      <option value="staff">Staff 📋</option>
+                      <option value="dispenser">Dispenser 💊</option>
                     </select>
                   </td>
                   <td>
@@ -644,16 +645,8 @@ export default function Settings() {
                   <td style={{ textAlign: 'right' }}>
                     <button
                       type="button"
+                      className="row-action-button"
                       onClick={() => handleDeleteUser(u.id, u.name)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#EF4444',
-                        cursor: 'pointer',
-                        padding: '0.35rem 0.5rem',
-                        fontSize: '0.78rem',
-                        fontWeight: 600,
-                      }}
                       title="Remove user"
                     >
                       Remove
@@ -707,10 +700,7 @@ export default function Settings() {
               onChange={e => setCurrency(e.target.value)}
               style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '0.85rem', background: '#FFFFFF' }}
             >
-              <option value="GHS">Ghanaian Cedi (GH₵)</option>
-              <option value="USD">US Dollar ($)</option>
-              <option value="EUR">Euro (€)</option>
-              <option value="GBP">British Pound (£)</option>
+              <option value="GHS">Ghanaian Cedi (GH&#8373;)</option>
             </select>
           </div>
         </div>
