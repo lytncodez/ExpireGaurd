@@ -1,112 +1,83 @@
-# ExpiryGuard 🛡️
-> **Intelligent Expiration Risk Tracking & Actionable Inventory Management Platform**
+# ExpiryGuard
 
-ExpiryGuard is a decision-driven SaaS inventory management platform engineered for pharmacies, medical clinics, laboratories, and retail warehouses. It transforms raw stock data into financial insights, automates **First Expired, First Out (FEFO)** stock rotation rules, and identifies capital value at risk in real time.
+ExpiryGuard is a pharmacy stock and batch tracking frontend. It helps staff review inventory, expiry risk, and FEFO priority, while giving administrators reporting and stock valuation views.
 
----
+## Features
 
-## 🌟 Key Features
+- **Dashboard:** inventory overview, rotating product spotlight, urgent batches, and FEFO queue.
+- **Inventory:** searchable batch repository with All Stock, FEFO, At Risk, and Expired views; quantity and expiry filters; status badges; and quarantine actions.
+- **Batch details:** product photo upload, batch information, expiry countdown, and role-specific price and supplier details.
+- **Add / Import:** manual stock entry plus simulated barcode scan and sample CSV import flows.
+- **Alerts:** current expiry warnings, risk filters, and acknowledgement actions.
+- **Reports (Admin):** risk distribution, a 12-month expiry value projection, category and supplier summaries, at-risk products, stock movement, and filtered CSV export.
+- **AI Insights (Admin):** sample operational insight and action-plan views.
+- **Settings (Admin):** risk thresholds, pharmacy settings, and a frontend user and role management interface.
+- **Shared design system:** responsive layouts, collapsible navigation, risk-band colors, reusable stat cards, and GH₵ currency formatting.
 
-### 1. High-Impact Financial & Trend Insights (6 KPI Cards)
-- **Total Products:** Total distinct items registered in the inventory catalog.
-- **Total Stock Volume:** Sum of all physical units currently stored across warehouses.
-- **Near Expiry (≤ 30 Days):** Items approaching expiration window with trend indicators.
-- **Critical (≤ 7 Days):** Urgent high-risk items requiring immediate intervention.
-- **Expired Inventory:** Total count of unsellable stock quarantined for write-off.
-- **Stock Value at Risk ($):** Total monetary capital tied up in stock expiring within 30 days.
+## Roles
 
-### 2. Visual Analytics & Decision Engine
-- **Expiry Risk Breakdown (Donut Segmented Chart):** Visual percentage share across all 5 risk tiers centered around total catalog volume.
-- **Stock Volume by Risk (Bar Chart):** Unit congestion metrics across physical storage zones.
-- **Urgent Actions Quick-Table:** Priority batch listing with direct action pills (*"Prioritize Sale"*, *"Reduce Price 50%"*, *"Quarantine & Write-Off"*, *"Return to Supplier"*).
-- **FEFO Decision Engine:** Smart suggestions prioritizing batch rotation, overstock reorder warnings, and vendor return warranty reminders.
+The demo sign-in supports two roles:
 
-### 3. Warehouse Matrix & Granular Filtering
-- **Multi-Filter Header:** Real-time search by product name, category, or batch number combined with dropdown filters for **Category**, **Supplier**, and **Risk Level**.
-- **Location & Batch Tracking:** Tracks batch numbers, aisle/shelf placement, unit pricing, dynamic day countdowns, and stock status (*In Stock*, *Low Stock*, *Quarantined*, *Pending Return*).
+| Role | Demo credentials | Access |
+| --- | --- | --- |
+| Admin | `admin@expireguard.com` / `admin123` | All pages, cost and supplier details, valuation reports, and settings. |
+| Dispenser | `dispenser@expireguard.com` / `dispenser123` | Dashboard, inventory, add/import, and alerts. Selling prices are shown; unit costs, supplier and receipt details, and valuation metrics are hidden in the app interface. |
 
-### 4. Enterprise Architecture & Reliability
-- **Full Canvas Layout:** Sleek slate-blue canvas (`#F0F4F8`), deep indigo sidebar (`#1E3A5F`), light/dark theme toggle, and responsive card containers.
-- **Shared Context & Local Persistence:** Centralized `InventoryProvider` with schema hydration to preserve custom stock entries across page reloads.
-- **Resilient Error Boundary:** Fail-safe UI layer with instant data recovery.
+The legacy demo account `manager@expireguard.com` / `manager123` also maps to Dispenser.
 
----
+### Access-control limitation
 
-## 🎨 Functional Risk Color System
+This repository is currently a browser-only prototype. Authentication, role overrides, settings, and inventory persistence are simulated with React state and `localStorage`; there is no server or API enforcing permissions. The role-based navigation, route guards, and role-scoped inventory context are client-side controls and **do not provide server-side confidentiality**. Do not use them to protect real commercial data until authentication and inventory access are moved to a backend that authorizes every request.
 
-| Risk Level | Window | Color | Palette |
-| :--- | :--- | :--- | :--- |
-| **Safe** | `> 60 days` | Mint Green | `#10B981` / `#E6F4EA` |
-| **Monitor** | `31 – 60 days` | Soft Gold | `#F59E0B` / `#FEF3C7` |
-| **Action Required** | `8 – 30 days` | Warm Amber | `#F97316` / `#FFEDD5` |
-| **Critical** | `1 – 7 days` | Soft Red | `#EF4444` / `#FEE2E2` |
-| **Expired** | `< 0 days` | Slate Grey | `#6B7280` / `#F3F4F6` |
+## Data behavior
 
----
+- Initial inventory comes from `library-app/src/api/mockData.ts`.
+- Inventory changes persist in browser `localStorage` under `expireguard_items`.
+- Existing saved inventory is retained between reloads in the same browser profile.
+- The scanner and CSV import screens currently demonstrate the workflow using sample records; they are not connected to a barcode service or general-purpose CSV parser.
+- Reports use the current inventory dataset. The 12-month at-risk chart groups current batch cost by expiry month; it is a projection from present stock, not historical stock accounting.
 
-## 🛠️ Technology Stack
+## Tech stack
 
-- **Core:** React 18, TypeScript, Vite
-- **Routing:** React Router DOM v6
-- **Styling:** Custom CSS Design System (CSS Variables, Flexbox/Grid layout)
-- **State Management:** React Context API + LocalStorage Persistence
-- **Linter & Type Checker:** Oxlint & TypeScript (`tsc`)
+- React 19, TypeScript 6, and Vite 8
+- React Router 7
+- React Context and browser `localStorage`
+- Lucide icons and custom CSS design system
+- Oxlint
 
----
+## Run locally
 
-## 🚀 Quick Start Guide
-
-### Prerequisites
-- Node.js (v18.0.0 or higher)
-- npm (v9.0.0 or higher)
-
-### Installation & Local Setup
+Requirements: Node.js compatible with the installed Vite version and npm.
 
 ```bash
-# 1. Clone repository
-git clone https://github.com/lytncodez/ExpireGaurd.git
-
-# 2. Navigate to application folder
-cd ExpireGaurd/library-app
-
-# 3. Install dependencies
+cd library-app
 npm install
-
-# 4. Start Vite development server
 npm run dev
 ```
 
-Open your browser at `http://localhost:5173` to view the application.
+Open the URL printed by Vite (typically `http://localhost:5173`). Use either demo account above to sign in.
 
-### Production Build
+## Build and lint
 
 ```bash
-# Type-check and build production bundle
 npm run build
+npm run lint
 ```
 
----
+## Project structure
 
-## 📁 Repository Structure
-
-```
+```text
 ExpireGaurd/
 ├── library-app/
-│   ├── public/                 # Static assets & icons
-│   ├── src/
-│   │   ├── api/                # Mock data & Inventory Context Provider
-│   │   ├── components/         # Header & Sidebar navigation components
-│   │   ├── pages/              # Dashboard, InventoryList, AddItem, ItemDetail
-│   │   ├── styles/             # Design system CSS tokens & theme rules
-│   │   ├── App.tsx             # Main routing & Error Boundary wrapper
-│   │   └── main.tsx            # Entry point
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── vite.config.ts
-└── README.md
+│   ├── public/                 # Static images and icons
+│   └── src/
+│       ├── api/                # Demo authentication and inventory contexts/data
+│       ├── components/         # Shared navigation, currency input, stat card
+│       ├── pages/              # Dashboard, Inventory, Add/Import, Alerts, Reports, etc.
+│       ├── styles/             # App and design-system CSS
+│       ├── utils/              # Shared currency formatting
+│       ├── App.tsx             # Routes, role gates, app shell, error boundary
+│       └── main.tsx            # Application entry point
+├── README.md
+└── .gitignore
 ```
-
----
-
-## 📄 License
-Distributed under the MIT License. See `LICENSE` for details.
