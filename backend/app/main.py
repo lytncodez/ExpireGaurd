@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import settings
-from .routes import auth, products, batches, alerts, imports, dashboard
+from .routes import alerts, auth, batches, dashboard, imports, insights, products
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -40,3 +40,4 @@ app.include_router(batches.router)
 app.include_router(alerts.router)
 app.include_router(imports.router)
 app.include_router(dashboard.router)
+app.include_router(insights.router)

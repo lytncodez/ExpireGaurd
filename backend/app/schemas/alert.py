@@ -1,18 +1,25 @@
 """Alert schemas"""
 
-from pydantic import BaseModel
 from datetime import datetime
-from app.models.alert import AlertType
+
+from pydantic import BaseModel, ConfigDict
+
+from app.models.alert import AlertSeverity, AlertType, SMSStatus
 
 
 class AlertResponse(BaseModel):
-    """Response"""
+    """Alert response payload."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     batch_id: int
     alert_type: AlertType
+    severity: AlertSeverity
     message: str
     is_read: bool
+    recipient_phone: str | None = None
+    sms_status: SMSStatus | None = None
+    sms_sent: bool = False
+    resolved_at: datetime | None = None
     created_at: datetime
-
-    class Config:
-        from_attributes = True

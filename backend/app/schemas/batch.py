@@ -1,7 +1,9 @@
 """Batch schemas"""
 
-from pydantic import BaseModel
 from datetime import date, datetime
+
+from pydantic import BaseModel, ConfigDict
+
 from app.models.batch import ExpiryStatus
 
 
@@ -20,6 +22,9 @@ class BatchUpdate(BaseModel):
 
 class BatchResponse(BaseModel):
     """Response"""
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     product_id: int
     batch_number: str
@@ -29,6 +34,3 @@ class BatchResponse(BaseModel):
     status: ExpiryStatus
     days_remaining: int | None
     created_at: datetime
-
-    class Config:
-        from_attributes = True

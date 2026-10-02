@@ -1,7 +1,8 @@
 """Sale schemas"""
 
-from pydantic import BaseModel
 from datetime import date, datetime
+
+from pydantic import BaseModel, ConfigDict
 
 
 class SaleCreate(BaseModel):
@@ -14,12 +15,12 @@ class SaleCreate(BaseModel):
 
 class SaleResponse(BaseModel):
     """Response"""
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     product_id: int
     quantity_sold: float
     sale_date: date
     revenue: float
     created_at: datetime
-
-    class Config:
-        from_attributes = True

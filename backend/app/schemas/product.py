@@ -1,7 +1,8 @@
 """Product schemas"""
 
-from pydantic import BaseModel
 from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
 
 
 class ProductCreate(BaseModel):
@@ -23,6 +24,9 @@ class ProductUpdate(BaseModel):
 
 class ProductResponse(BaseModel):
     """Response"""
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     user_id: int
     name: str
@@ -30,6 +34,3 @@ class ProductResponse(BaseModel):
     category: str | None
     unit_price: float
     created_at: datetime
-
-    class Config:
-        from_attributes = True

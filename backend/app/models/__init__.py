@@ -6,6 +6,8 @@ from .batch import Batch, ExpiryStatus
 from .sale import Sale
 from .alert import Alert, AlertType
 from .insight import Insight
+from app.models.alert import Alert
+from app.models.insight import Insight
 
 __all__ = [
     "User",
