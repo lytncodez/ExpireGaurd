@@ -5,14 +5,17 @@ import { useInventory } from '../api/useInventory';
 import type { InventoryItem } from '../api/mockData';
 import { formatGhc } from '../utils/currency';
 import { useAuth } from '../api/useAuth';
+import { QuarantineActionButton } from '../components/QuarantineActionButton';
 
-type InventoryTab = 'all' | 'batch' | 'risk' | 'expired';
+type InventoryTab = 'all' | 'batch' | 'risk' | 'expired' | 'quarantined' | 'disposed';
 const dayMs = 24 * 60 * 60 * 1000;
 const tabs: { id: InventoryTab; label: string }[] = [
   { id: 'all', label: 'All Stock' },
   { id: 'batch', label: 'By Batch (FEFO View)' },
   { id: 'risk', label: 'Near-Expiry / At Risk' },
   { id: 'expired', label: 'Expired Stock' },
+  { id: 'quarantined', label: 'Quarantined' },
+  { id: 'disposed', label: 'Disposed' },
 ];
 
 function getRisk(item: InventoryItem, now: number) {
@@ -34,7 +37,7 @@ function formatDate(value?: string) {
 export default function InventoryList({ searchTerm = '' }: { searchTerm?: string }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { items, loading, error, updateItem } = useInventory();
+  const { items, loading, error } = useInventory();
   const [activeTab, setActiveTab] = useState<InventoryTab>('all');
   const [localSearch, setLocalSearch] = useState('');
   const [maxQuantity, setMaxQuantity] = useState('');
@@ -47,9 +50,13 @@ export default function InventoryList({ searchTerm = '' }: { searchTerm?: string
   const filteredItems = useMemo(() => (items || []).filter(item => {
     const risk = getRisk(item, now);
     const isQuarantined = item.status === 'Quarantined';
-    if (activeTab === 'expired' && risk.key !== 'Expired') return false;
-    if (activeTab !== 'expired' && (risk.key === 'Expired' || isQuarantined)) return false;
-    if (activeTab === 'risk' && !['Monitor', 'Action Required', 'Critical'].includes(risk.key)) return false;
+    if (activeTab === 'disposed' ? item.status !== 'Disposed' : item.status === 'Disposed') return false;
+    if (activeTab === 'quarantined' ? !isQuarantined : activeTab !== 'expired' && isQuarantined) return false;
+    if (activeTab !== 'disposed') {
+      if (activeTab === 'expired' && risk.key !== 'Expired') return false;
+      if (activeTab !== 'expired' && activeTab !== 'quarantined' && risk.key === 'Expired') return false;
+      if (activeTab === 'risk' && !['Monitor', 'Action Required', 'Critical'].includes(risk.key)) return false;
+    }
     const searchable = [item.name, item.category, item.batchNo, ...(isAdmin ? [item.supplier] : []), item.location].join(' ').toLowerCase();
     if (searchTerms.some(search => !searchable.includes(search))) return false;
     if (qtyLimit !== undefined && Number.isFinite(qtyLimit) && item.quantity > qtyLimit) return false;
@@ -79,7 +86,7 @@ export default function InventoryList({ searchTerm = '' }: { searchTerm?: string
     </div>
 
     <div className="inventory-tabs" role="tablist" aria-label="Inventory views">
-      {tabs.map(tab => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={`inventory-tab${activeTab === tab.id ? ' is-active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}{tab.id === 'expired' && <span className="inventory-tab-count">{items.filter(item => getRisk(item, now).key === 'Expired').length}</span>}</button>)}
+      {tabs.map(tab => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={`inventory-tab${activeTab === tab.id ? ' is-active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}{tab.id === 'expired' && <span className="inventory-tab-count">{items.filter(item => getRisk(item, now).key === 'Expired' && item.status !== 'Disposed').length}</span>}{tab.id === 'quarantined' && <span className="inventory-tab-count">{items.filter(item => item.status === 'Quarantined').length}</span>}{tab.id === 'disposed' && <span className="inventory-tab-count">{items.filter(item => item.status === 'Disposed').length}</span>}</button>)}
     </div>
 
     <section className="card-container inventory-card">
@@ -109,8 +116,8 @@ export default function InventoryList({ searchTerm = '' }: { searchTerm?: string
               <td>{formatDate(item.manufacturingDate)}</td>
               <td><span className="inventory-expiry-date">{formatDate(item.expiryDate)}</span><span className="inventory-cell-muted">{risk.days < 0 ? `${Math.abs(risk.days)} days ago` : `${risk.days} days left`}</span></td>
               {isAdmin && <td><span>{item.supplier || '-'}</span><span className="inventory-cell-muted">Received {formatDate(item.dateReceived)}</span></td>}
-              <td><span className={`risk-badge ${risk.badge}`}><span className="risk-badge-dot" />{quarantined ? 'Quarantined' : risk.label}</span></td>
-              {activeTab === 'expired' && <td>{quarantined ? <span className="quarantined-label">Quarantined</span> : <button className="row-action-button" type="button" onClick={() => updateItem(item.id, { status: 'Quarantined' })}>Quarantine / Remove</button>}</td>}
+              <td><span className={`risk-badge ${item.status === 'Disposed' ? 'risk-badge--expired' : risk.badge}`}><span className="risk-badge-dot" />{item.status === 'Disposed' ? 'Disposed' : quarantined ? 'Quarantined' : risk.label}</span></td>
+              {activeTab === 'expired' && <td>{quarantined ? <span className="quarantined-label">Quarantined</span> : <QuarantineActionButton itemId={item.id} itemName={item.name} />}</td>}
             </tr>;
           })}</tbody>
         </table>}

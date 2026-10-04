@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowDownToLine, ClipboardCheck, DollarSign, Package, Pi
 import { useInventory } from '../api/useInventory';
 import StatCard from '../components/StatCard';
 import { formatGhc } from '../utils/currency';
+import { Button } from '../components/ui/Button';
 
 type Risk = 'Safe' | 'Monitor' | 'Action' | 'Critical' | 'Expired';
 const riskColors: Record<Risk, string> = { Safe: '#16a36a', Monitor: '#e9a423', Action: '#f17b32', Critical: '#df4545', Expired: '#8290a2' };
@@ -10,7 +11,8 @@ const riskLabel: Record<Risk, string> = { Safe: 'Safe', Monitor: 'Monitor', Acti
 const day = 86400000;
 
 export default function Reports() {
-  const { items = [] } = useInventory();
+  const { items: inventoryItems = [] } = useInventory();
+  const items = inventoryItems.filter(item => item.status !== 'Disposed');
   const now = Date.now();
   const [selectedRiskFilter, setSelectedRiskFilter] = useState<'All' | Risk>('All');
   const [selectedTimeRange, setSelectedTimeRange] = useState<'30' | '60' | '90' | 'all'>('all');
@@ -101,7 +103,7 @@ export default function Reports() {
     <section className="reports-toolbar card-container">
       <div className="reports-toolbar-heading">
         <div><h1>Reports &amp; Inventory Analytics</h1><p>Risk exposure, supplier quality, stock value and product movement.</p></div>
-        <button type="button" className="reports-export-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export At-Risk CSV</button>
+        <Button type="button" className="reports-export-button" onClick={exportCsv}><ArrowDownToLine size={17} /> Export At-Risk CSV</Button>
       </div>
       <div className="reports-filters">
         <label>Risk band<select value={selectedRiskFilter} onChange={e => setSelectedRiskFilter(e.target.value as 'All' | Risk)} className="form-input"><option value="All">All risk bands</option>{(['Monitor', 'Action', 'Critical', 'Expired'] as Risk[]).map(risk => <option key={risk} value={risk}>{riskLabel[risk]}</option>)}</select></label>

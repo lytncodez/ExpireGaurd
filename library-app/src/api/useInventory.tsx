@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { mockItems, type InventoryItem } from './mockData';
+import { mockItems, type InventoryActivity, type InventoryItem, type WorkflowReason } from './mockData';
 import { useAuth } from './useAuth';
 
 interface InventoryContextType {
@@ -9,6 +9,14 @@ interface InventoryContextType {
   addItem: (item: Omit<InventoryItem, 'id'>) => void;
   deleteItem: (id: string) => void;
   updateItem: (id: string, updates: Partial<InventoryItem>) => void;
+  acknowledgeItem: (id: string) => void;
+  flagItemForReview: (id: string, note: string) => void;
+  closeAdminFlag: (id: string, status: 'resolved' | 'dismissed', note?: string) => void;
+  quarantineItem: (id: string, reason: WorkflowReason) => void;
+  addItemNote: (id: string, note: string) => void;
+  requestSupplierReturn: (id: string, note?: string) => void;
+  processSupplierReturn: (id: string) => void;
+  disposeItem: (id: string, reason: WorkflowReason, note?: string) => void;
   resetToMock: () => void;
 }
 
@@ -39,6 +47,12 @@ function sanitizeItems(parsed: any[]): InventoryItem[] {
     riskStatus: item.riskStatus || undefined,
     recommendedAction: item.recommendedAction || 'Review stock rotation',
     velocity: item.velocity || 'Moderate',
+    acknowledged: item.acknowledged && typeof item.acknowledged.at === 'string' ? item.acknowledged : undefined,
+    activityLog: Array.isArray(item.activityLog) ? item.activityLog.filter((entry: unknown) => entry && typeof entry === 'object') as InventoryActivity[] : [],
+    adminFlag: item.adminFlag && typeof item.adminFlag.at === 'string' ? item.adminFlag : undefined,
+    supplierReturnRequest: item.supplierReturnRequest && typeof item.supplierReturnRequest.requestedAt === 'string' ? item.supplierReturnRequest : undefined,
+    quarantineReason: item.quarantineReason,
+    disposal: item.disposal && typeof item.disposal.at === 'string' ? item.disposal : undefined,
   }));
 }
 
@@ -92,6 +106,84 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     setItems(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
   };
 
+  const addActivity = (id: string, action: string, note?: string, updates: Partial<InventoryItem> = {}) => {
+    const actor = { actorId: user?.id ?? 'unknown', actorName: user?.name ?? 'Staff member' };
+    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action, ...actor, at: new Date().toISOString(), ...(note ? { note } : {}) };
+    setItems(prev => prev.map(item => item.id === id ? { ...item, ...updates, activityLog: [...(item.activityLog ?? []), activity] } : item));
+  };
+
+  const acknowledgeItem = (id: string) => {
+    if (!user) return;
+    const at = new Date().toISOString();
+    addActivity(id, 'Acknowledged expiry alert', undefined, { acknowledged: { actorId: user.id, actorName: user.name, at } });
+  };
+
+  const flagItemForReview = (id: string, note: string) => {
+    if (!user) return;
+    const at = new Date().toISOString();
+    addActivity(id, 'Flagged for Admin Review', note, { adminFlag: { status: 'open', note, actorId: user.id, actorName: user.name, at } });
+  };
+
+  const closeAdminFlag = (id: string, status: 'resolved' | 'dismissed', note = '') => {
+    if (user?.role !== 'admin') return;
+    const at = new Date().toISOString();
+    const action = status === 'resolved' ? 'Resolved Admin Review flag' : 'Dismissed Admin Review flag';
+    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action, actorId: user.id, actorName: user.name, at, ...(note ? { note } : {}) };
+    setItems(prev => prev.map(item => item.id === id ? {
+      ...item,
+      adminFlag: item.adminFlag ? { ...item.adminFlag, status, closedBy: user.name, closedAt: at, ...(note ? { resolutionNote: note } : {}) } : undefined,
+      activityLog: [...(item.activityLog ?? []), activity],
+    } : item));
+  };
+
+  const quarantineItem = (id: string, reason: WorkflowReason) => {
+    addActivity(id, 'Moved to Quarantine', `Reason: ${reason}`, { status: 'Quarantined', quarantineReason: reason });
+  };
+
+  const addItemNote = (id: string, note: string) => {
+    if (!note.trim()) return;
+    addActivity(id, 'Added batch note', note.trim());
+  };
+
+  const requestSupplierReturn = (id: string, note = '') => {
+    if (!user) return;
+    const at = new Date().toISOString();
+    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action: 'Requested supplier return', actorId: user.id, actorName: user.name, at, ...(note.trim() ? { note: note.trim() } : {}) };
+    setItems(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      if (item.supplierReturnRequest?.status === 'requested') return item;
+      const request = {
+        status: 'requested' as const,
+        supplierName: item.supplier || 'Supplier not recorded',
+        supplierBatchNo: item.batchNo,
+        requestedBy: user.name,
+        requestedAt: at,
+        ...(note.trim() ? { note: note.trim() } : {}),
+      };
+      return { ...item, status: 'Pending Return', supplierReturnRequest: request, activityLog: [...(item.activityLog ?? []), activity] };
+    }));
+  };
+
+  const processSupplierReturn = (id: string) => {
+    if (user?.role !== 'admin') return;
+    const at = new Date().toISOString();
+    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action: 'Processed supplier return request', actorId: user.id, actorName: user.name, at };
+    setItems(prev => prev.map(item => {
+      if (item.id !== id || !item.supplierReturnRequest) return item;
+      return { ...item, supplierReturnRequest: { ...item.supplierReturnRequest, status: 'processed', processedBy: user.name, processedAt: at }, status: 'Quarantined', quarantineReason: 'Supplier Return', activityLog: [...(item.activityLog ?? []), activity] };
+    }));
+  };
+
+  const disposeItem = (id: string, reason: WorkflowReason, note = '') => {
+    if (!user) return;
+    const at = new Date().toISOString();
+    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action: 'Confirmed physical disposal', actorId: user.id, actorName: user.name, at, note: `Reason: ${reason}${note.trim() ? ` — ${note.trim()}` : ''}` };
+    setItems(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      return { ...item, status: 'Disposed', disposal: { reason, quantity: item.quantity, actorId: user.id, actorName: user.name, at, ...(note.trim() ? { note: note.trim() } : {}) }, quantity: 0, activityLog: [...(item.activityLog ?? []), activity] };
+    }));
+  };
+
   const resetToMock = () => {
     localStorage.removeItem('expireguard_items');
     setItems(mockItems);
@@ -103,10 +195,11 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     unitCostGhs: undefined,
     supplier: undefined,
     dateReceived: undefined,
+    supplierReturnRequest: item.supplierReturnRequest ? { ...item.supplierReturnRequest, supplierName: undefined } : undefined,
   })), [items, user?.role]);
 
   return (
-    <InventoryContext.Provider value={{ items: roleScopedItems, loading, error, addItem, deleteItem, updateItem, resetToMock }}>
+    <InventoryContext.Provider value={{ items: roleScopedItems, loading, error, addItem, deleteItem, updateItem, acknowledgeItem, flagItemForReview, closeAdminFlag, quarantineItem, addItemNote, requestSupplierReturn, processSupplierReturn, disposeItem, resetToMock }}>
       {children}
     </InventoryContext.Provider>
   );

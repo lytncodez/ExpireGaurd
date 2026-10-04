@@ -1,9 +1,18 @@
 import { useState, useMemo } from 'react';
-import { AlertTriangle, Bell, Clock3, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Bell, Check, Clock3, ShieldAlert } from 'lucide-react';
 import { useInventory } from '../api/useInventory';
 import StatCard from '../components/StatCard';
 import { formatGhc } from '../utils/currency';
 import { useAuth } from '../api/useAuth';
+import { AlertWorkflowActions } from '../components/AlertWorkflowActions';
+import { Button } from '../components/ui/Button';
+
+type AlertTab = 'All' | 'Critical' | 'Expiring Soon' | 'Expired' | 'Flagged Items' | 'Supplier Returns';
+
+function formatActionTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Unknown time' : date.toLocaleString('en-GH', { dateStyle: 'medium', timeStyle: 'short' });
+}
 
 interface AlertsProps {
   searchTerm?: string;
@@ -12,11 +21,10 @@ interface AlertsProps {
 export default function Alerts({ searchTerm = '' }: AlertsProps) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { items } = useInventory();
+  const { items, acknowledgeItem, closeAdminFlag, processSupplierReturn } = useInventory();
   const now = Date.now();
 
-  const [filterTab, setFilterTab] = useState<'All' | 'Critical' | 'Expiring Soon' | 'Expired'>('All');
-  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState<Record<string, boolean>>({});
+  const [filterTab, setFilterTab] = useState<AlertTab>('All');
 
   // Thresholds (90, 60, 30, 7 days, on-expiry)
   const thresholds = [
@@ -69,6 +77,11 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
           unitPrice: item.unitPrice,
           expiryDate: item.expiryDate,
           supplier: item.supplier,
+          acknowledged: item.acknowledged,
+          activityLog: item.activityLog ?? [],
+          adminFlag: item.adminFlag,
+          supplierReturnRequest: item.supplierReturnRequest,
+          status: item.status,
           location: item.location,
           diffDays,
           riskBand,
@@ -78,7 +91,7 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
           valueAtRisk: (item.quantity || 0) * (item.unitPrice || 0),
         };
       })
-      .filter(item => item.riskBand !== 'Safe') // Only non-safe items generate active alerts
+      .filter(item => item.riskBand !== 'Safe' && item.status !== 'Disposed') // Only non-safe, undisposed batches generate active alerts
       .sort((a, b) => a.diffDays - b.diffDays);
   }, [items, now]);
 
@@ -96,13 +109,13 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
       if (filterTab === 'Critical') return alert.riskBand === 'Critical';
       if (filterTab === 'Expiring Soon') return alert.riskBand === 'Expiring Soon';
       if (filterTab === 'Expired') return alert.riskBand === 'Expired';
+      if (filterTab === 'Flagged Items') return alert.adminFlag?.status === 'open';
+      if (filterTab === 'Supplier Returns') return alert.supplierReturnRequest?.status === 'requested';
       return true;
     });
   }, [alertsList, filterTab, searchTerm]);
 
-  const toggleAcknowledge = (id: string) => {
-    setAcknowledgedAlerts(prev => ({ ...prev, [id]: !prev[id] }));
-  };
+  const tabs: AlertTab[] = ['All', 'Critical', 'Expiring Soon', 'Expired', ...(isAdmin ? ['Flagged Items', 'Supplier Returns'] as AlertTab[] : [])];
 
   return (
     <div className="page-body">
@@ -160,13 +173,15 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
       </div>
 
       {/* Filter Tabs (All / Critical / Expiring Soon / Expired) */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
-        {(['All', 'Critical', 'Expiring Soon', 'Expired'] as const).map(tab => {
+      <div className="alerts-tabs" role="tablist" aria-label="Alert views">
+        {tabs.map(tab => {
           const count = alertsList.filter(a => {
             if (tab === 'All') return true;
             if (tab === 'Critical') return a.riskBand === 'Critical';
             if (tab === 'Expiring Soon') return a.riskBand === 'Expiring Soon';
             if (tab === 'Expired') return a.riskBand === 'Expired';
+            if (tab === 'Flagged Items') return a.adminFlag?.status === 'open';
+            if (tab === 'Supplier Returns') return a.supplierReturnRequest?.status === 'requested';
             return false;
           }).length;
 
@@ -176,31 +191,12 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
               key={tab}
               type="button"
               onClick={() => setFilterTab(tab)}
-              style={{
-                background: isActive ? '#3B3593' : '#FFFFFF',
-                color: isActive ? '#FFFFFF' : '#1E3A4C',
-                border: `1.5px solid ${isActive ? '#3B3593' : '#E5E9F2'}`,
-                padding: '0.55rem 1.15rem',
-                borderRadius: '10px',
-                fontSize: '0.84rem',
-                fontWeight: 700,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.45rem',
-                boxShadow: isActive ? '0 4px 12px rgba(59, 53, 147, 0.2)' : '0 1px 3px rgba(0,0,0,0.03)',
-                transition: 'all 0.15s ease',
-              }}
+              className={`alerts-tab${isActive ? ' is-active' : ''}`}
+              role="tab"
+              aria-selected={isActive}
             >
               <span>{tab}</span>
-              <span style={{
-                background: isActive ? 'rgba(255,255,255,0.25)' : '#F1F5F9',
-                color: isActive ? '#FFFFFF' : '#64748B',
-                fontSize: '0.72rem',
-                padding: '0.1rem 0.45rem',
-                borderRadius: '9999px',
-                fontWeight: 800,
-              }}>
+              <span className="alerts-tab-count">
                 {count}
               </span>
             </button>
@@ -210,21 +206,16 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
 
       {/* Alert Cards Grid */}
       {filteredAlerts.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1rem' }}>
+        <div className="alerts-card-grid">
           {filteredAlerts.map(alert => {
-            const isAck = !!acknowledgedAlerts[alert.id];
+            const isAck = !!alert.acknowledged;
             return (
               <div
                 key={alert.id}
-                className="card-container"
+                className="card-container alert-card"
                 style={{
                   borderLeft: `5px solid ${alert.riskColor}`,
-                  opacity: isAck ? 0.65 : 1,
-                  transition: 'all 0.2s ease',
-                  padding: '1.25rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
+                  opacity: 1,
                 }}
               >
                 <div>
@@ -274,21 +265,50 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
                       <strong style={{ fontSize: '0.82rem', color: '#475569' }}>{alert.location}</strong>
                     </div>
                   </div>
+
+                  {alert.supplierReturnRequest && <div className="workflow-notice workflow-notice--return">
+                    <strong>{alert.supplierReturnRequest.status === 'requested' ? 'Supplier return requested' : 'Supplier return processed'}</strong>
+                    <span>{isAdmin ? `${alert.supplierReturnRequest.supplierName || 'Supplier not recorded'} · ` : ''}Requested by {alert.supplierReturnRequest.requestedBy} · {formatActionTime(alert.supplierReturnRequest.requestedAt)}</span>
+                    {alert.supplierReturnRequest.note && <small>{alert.supplierReturnRequest.note}</small>}
+                    {isAdmin && alert.supplierReturnRequest.status === 'requested' && <Button size="sm" variant="secondary" onClick={() => processSupplierReturn(alert.id)}>Mark return processed</Button>}
+                  </div>}
+
+                  {alert.adminFlag && <div className={`workflow-notice workflow-notice--flag${alert.adminFlag.status === 'open' ? ' is-open' : ''}`}>
+                    <strong>{alert.adminFlag.status === 'open' ? 'Flagged for Admin Review' : `Review ${alert.adminFlag.status}`}</strong>
+                    {alert.adminFlag.actorName && <span>Flagged by {alert.adminFlag.actorName} · {formatActionTime(alert.adminFlag.at)}</span>}
+                    {alert.adminFlag.note && <small>{alert.adminFlag.note}</small>}
+                    {alert.adminFlag.status !== 'open' && alert.adminFlag.closedBy && <small>{alert.adminFlag.status} by {alert.adminFlag.closedBy} · {alert.adminFlag.closedAt && formatActionTime(alert.adminFlag.closedAt)}</small>}
+                    {alert.adminFlag.resolutionNote && <small>Admin note: {alert.adminFlag.resolutionNote}</small>}
+                    {isAdmin && alert.adminFlag.status === 'open' && <div className="workflow-notice-actions">
+                      <Button size="sm" variant="secondary" onClick={() => closeAdminFlag(alert.id, 'resolved')}>Resolve</Button>
+                      <Button size="sm" variant="outline" onClick={() => closeAdminFlag(alert.id, 'dismissed')}>Dismiss</Button>
+                    </div>}
+                  </div>}
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid #F1F5F9' }}>
+                <div className="alert-card-actions">
                   <button
                     type="button"
-                    className="row-action-button"
-                    onClick={() => toggleAcknowledge(alert.id)}
+                    className="row-action-button ui-button ui-button--row-action ui-button--sm"
+                    onClick={() => acknowledgeItem(alert.id)}
+                    disabled={isAck}
                   >
                     {isAck ? '✓ Acknowledged' : 'Mark Acknowledged'}
                   </button>
+                  {isAck && <span className="alert-acknowledgement"><Check size={15} aria-hidden="true" /> Acknowledged by {alert.acknowledged?.actorName}, {formatActionTime(alert.acknowledged?.at ?? '')}</span>}
 
-                  <span style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 600 }}>
+                  <span className="alert-fefo-priority">
                     FEFO Dispense Priority
                   </span>
+                  <AlertWorkflowActions itemId={alert.id} itemName={alert.name} returnRequested={alert.supplierReturnRequest?.status === 'requested'} />
                 </div>
+                <details className="alert-activity-log">
+                  <summary>Activity history <span>{alert.activityLog.length}</span></summary>
+                  {alert.activityLog.length > 0 ? <ol>{[...alert.activityLog].reverse().map(entry => <li key={entry.id}>
+                    <div><strong>{entry.action}</strong><span>{entry.actorName} · {formatActionTime(entry.at)}</span></div>
+                    {entry.note && <p>{entry.note}</p>}
+                  </li>)}</ol> : <p className="alert-activity-empty">No activity recorded for this batch yet.</p>}
+                </details>
               </div>
             );
           })}
@@ -301,10 +321,10 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
             </svg>
           </div>
           <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#1E3A4C', margin: '0 0 0.5rem' }}>
-            No Active Alerts in this Tab
+            {filterTab === 'Flagged Items' ? 'No Items Awaiting Admin Review' : filterTab === 'Supplier Returns' ? 'No Supplier Returns Awaiting Review' : 'No Active Alerts in this Tab'}
           </h3>
           <p style={{ fontSize: '0.88rem', color: '#64748B', margin: 0 }}>
-            All pharmaceutical batches in this category are within safe expiration thresholds.
+            {filterTab === 'Flagged Items' ? 'Staff escalations will appear here for Admin review.' : filterTab === 'Supplier Returns' ? 'Supplier return requests from dispensers will appear here.' : 'All pharmaceutical batches in this category are within safe expiration thresholds.'}
           </p>
         </div>
       )}

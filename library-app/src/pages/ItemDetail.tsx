@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ImagePlus, Pill } from 'lucide-react';
+import { ArrowLeft, ImagePlus, Pill } from 'lucide-react';
 import { useInventory } from '../api/useInventory';
 import { formatGhc } from '../utils/currency';
 import { useAuth } from '../api/useAuth';
+import { Button } from '../components/ui/Button';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { Card } from '../components/ui/Card';
 
 function getRisk(expiryDate: string, nowTimestamp: number): { label: string; badgeClass: string } {
   const exp = new Date(expiryDate).getTime();
@@ -22,6 +25,7 @@ export default function ItemDetail() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [photoError, setPhotoError] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const nowTimestamp = Date.now();
 
   const item = items.find(i => i.id === id);
@@ -29,17 +33,17 @@ export default function ItemDetail() {
   if (!item) {
     return (
       <div className="page-body">
-        <div className="card-container form-card" style={{ textAlign: 'center', padding: '3rem' }}>
+        <Card className="card-container form-card" style={{ textAlign: 'center', padding: '3rem' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '0.5rem' }}>
             Item Not Found
           </h2>
           <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
             The requested inventory item could not be located in the system database.
           </p>
-          <button className="btn-primary" onClick={() => navigate('/inventory')}>
+          <Button onClick={() => navigate('/inventory')}>
             Return to Inventory Catalog
-          </button>
-        </div>
+          </Button>
+        </Card>
       </div>
     );
   }
@@ -49,10 +53,8 @@ export default function ItemDetail() {
   const totalValueAtRisk = diffDays <= 30 ? (item.quantity * item.unitPrice) : 0;
 
   const handleDelete = () => {
-    if (window.confirm(`Are you sure you want to delete ${item.name}?`)) {
-      deleteItem(item.id);
-      navigate('/inventory');
-    }
+    deleteItem(item.id);
+    navigate('/inventory');
   };
 
   const handlePhotoUpload = (file?: File) => {
@@ -89,7 +91,7 @@ export default function ItemDetail() {
 
   return (
     <div className="page-body">
-      <div className="card-container form-card">
+      <Card className="card-container form-card">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-card)', paddingBottom: '1rem' }}>
           <div className="detail-product-heading">
             <div className="detail-product-photo">
@@ -180,23 +182,42 @@ export default function ItemDetail() {
           </table>
         </div>
 
+        {item.disposal && <div className="workflow-notice workflow-notice--return" role="status">
+          <strong>Disposal recorded</strong>
+          <span>{item.disposal.quantity.toLocaleString()} units · Reason: {item.disposal.reason} · {item.disposal.actorName} · {new Date(item.disposal.at).toLocaleString('en-GH', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+          {item.disposal.note && <small>{item.disposal.note}</small>}
+        </div>}
+
+        <details className="alert-activity-log item-activity-log">
+          <summary>Activity history <span>{item.activityLog?.length ?? 0}</span></summary>
+          {item.activityLog?.length ? <ol>{[...item.activityLog].reverse().map(entry => <li key={entry.id}>
+            <div><strong>{entry.action}</strong><span>{entry.actorName} · {new Date(entry.at).toLocaleString('en-GH', { dateStyle: 'medium', timeStyle: 'short' })}</span></div>
+            {entry.note && <p>{entry.note}</p>}
+          </li>)}</ol> : <p className="alert-activity-empty">No activity recorded for this batch yet.</p>}
+        </details>
+
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'space-between' }}>
-          <button className="btn-secondary" onClick={() => navigate('/inventory')}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="19" y1="12" x2="5" y2="12" />
-              <polyline points="12 19 5 12 12 5" />
-            </svg>
+          <Button variant="outline" onClick={() => navigate('/inventory')}>
+            <ArrowLeft size={16} aria-hidden="true" />
             Back to Catalog
-          </button>
-          {isAdmin && <button className="btn-danger" onClick={handleDelete}>
+          </Button>
+          {isAdmin && <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="3 6 5 6 21 6" />
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             </svg>
             Delete Item
-          </button>}
+          </Button>}
         </div>
-      </div>
+      </Card>
+      {isAdmin && <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${item.name}?`}
+        description="This permanently removes the item from inventory. This action cannot be undone."
+        confirmLabel="Delete item"
+        onConfirm={handleDelete}
+      />}
     </div>
   );
 }
