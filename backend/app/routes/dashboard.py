@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from app.core.database import get_db
 from app.models.batch import Batch, ExpiryStatus
@@ -60,14 +60,16 @@ def get_dashboard_summary(db: Session = Depends(get_db), user_id: int = 1):
     ).count()
     
     # Sales stats (today)
-    today = date.today()
+    today = datetime.combine(date.today(), datetime.min.time())
+    tomorrow = today + timedelta(days=1)
     sales_today = db.query(Sale).filter(
         Sale.product_id.in_(product_ids),
-        Sale.sale_date == today
+        Sale.sold_at >= today,
+        Sale.sold_at < tomorrow,
     ).all()
-    
-    total_sales = sum(s.quantity_sold for s in sales_today)
-    total_revenue = sum(s.revenue for s in sales_today)
+
+    total_sales = sum(s.quantity for s in sales_today)
+    total_revenue = sum(s.total_amount for s in sales_today)
     
     return {
         "total_products": len(products),

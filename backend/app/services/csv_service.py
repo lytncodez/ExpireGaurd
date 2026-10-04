@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.models.batch import Batch
 from app.models.product import Product
-from app.services.alert_service import create_alert_for_batch
-from app.services.expiry_service import update_batch_expiry_status
+from app.models.user import User
+from app.services.alert_service import process_batch_alerts
 
 
 def parse_csv(contents: bytes):
@@ -65,6 +65,9 @@ def import_csv(db: Session, contents: bytes, user_id: int) -> dict:
     products_created = 0
     batches_created = 0
     errors_list = []
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise ValueError(f"User {user_id} does not exist")
 
     for idx, row in enumerate(rows, start=2):
         try:
@@ -95,8 +98,7 @@ def import_csv(db: Session, contents: bytes, user_id: int) -> dict:
             db.add(batch)
             db.flush()
 
-            update_batch_expiry_status(db, batch)
-            create_alert_for_batch(db, batch)
+            process_batch_alerts(db, batch, user.phone)
             batches_created += 1
         except Exception as exc:
             errors_list.append(f"Row {idx}: {exc}")

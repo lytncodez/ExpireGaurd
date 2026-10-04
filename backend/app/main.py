@@ -6,7 +6,26 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import settings
+from .core.database import Base, engine
+from .models import user, product, batch  # adjust to your actual model files
 from .routes import alerts, auth, batches, dashboard, expiry, imports, insights, products
+
+
+from .routes import (
+    alerts,
+    auth,
+    batches,
+    dashboard,
+    expiry,
+    imports,
+    insights,
+    products,
+)
+
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
+
 
 # Initialize FastAPI app
 app = FastAPI(
