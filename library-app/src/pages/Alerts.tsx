@@ -224,7 +224,7 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
                       <span style={{ fontSize: '0.72rem', color: '#8E9BAE', fontWeight: 700, textTransform: 'uppercase' }}>
                         {alert.category}
                       </span>
-                      <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#1E3A4C', margin: '0.15rem 0 0.25rem' }}>
+                      <h3 title={alert.name} style={{ fontSize: '1.05rem', fontWeight: 800, color: '#1E3A4C', margin: '0.15rem 0 0.25rem' }}>
                         {alert.name}
                       </h3>
                       <span style={{ fontSize: '0.78rem', color: '#3B3593', fontWeight: 700 }}>

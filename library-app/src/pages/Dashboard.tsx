@@ -282,7 +282,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
                   {filteredRows.map(item => (
                     <tr key={`${item.batch}-${item.product}`}>
                       <td>
-                        <div className="dashboard-cell-primary">{item.product}</div>
+                        <div className="dashboard-cell-primary" title={item.product}>{item.product}</div>
                         <div className="dashboard-cell-muted">{item.category}</div>
                       </td>
 

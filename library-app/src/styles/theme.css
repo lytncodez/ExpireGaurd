@@ -2463,3 +2463,73 @@
   .app-container .app-header .search-input,
   .app-container .app-header .search-input:focus { width: clamp(10rem, 40vw, 15rem); }
 }
+
+/* Softer shadcn-inspired corners with clear pointer and touch feedback. */
+.app-container .app-header .search-input,
+.app-container .app-header .search-input:focus,
+.app-container .inventory-search,
+.app-container .inventory-number,
+.app-container .inventory-toolbar .btn-primary,
+.app-container .inventory-toolbar .btn-secondary,
+.app-container .form-input,
+.app-container .ui-input,
+.app-container .ui-select,
+.app-container .ui-textarea { border-radius: 0.75rem; }
+.app-container .card-container,
+.app-container .ui-card,
+.app-container .dashboard-panel,
+.app-container .reports-chart-card,
+.app-container .inventory-card,
+.app-container .alert-card { border-radius: 0.875rem; }
+.app-container .modern-table,
+.app-container .table-responsive,
+.app-container .inventory-table-wrap { border-radius: 0.75rem; }
+.app-container .ui-button,
+.app-container .alerts-tab,
+.app-container .reports-segment button,
+.app-container .dashboard-refresh-button { border-radius: 0.5rem; }
+.app-container :where(button, a, [role="tab"], .inventory-row-clickable) {
+  -webkit-tap-highlight-color: rgba(67, 56, 202, 0.16);
+  touch-action: manipulation;
+}
+.app-container :where(button, a, [role="tab"]) { transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease; }
+.app-container :where(button, a, [role="tab"]):active { transform: scale(0.98); }
+.app-container .ui-button:active,
+.app-container .alerts-tab:active,
+.app-container .reports-segment button:active,
+.app-container .dashboard-refresh-button:active,
+.app-container .header-voice-search:active,
+.app-container .header-clear-search:active { background-color: #eef2ff; color: #3730a3; }
+.app-container .nav-item:active,
+.app-container .mobile-nav-item:active { background-color: rgba(99, 102, 241, 0.18); }
+.app-container .inventory-row-clickable { cursor: pointer; }
+.app-container .inventory-row-clickable:active td,
+.app-container .modern-table tbody tr:active td { background: #eef2ff !important; }
+.app-container .dashboard-cell-primary,
+.app-container .inventory-product-link,
+.app-container .reports-top-name b { position: relative; }
+.app-container .inventory-product-link { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-container .dashboard-cell-primary { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-container .reports-top-name b { max-width: 100%; }
+.app-container .inventory-product-link:focus-visible,
+.app-container .dashboard-cell-primary:focus-visible,
+.app-container .reports-top-name b:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .app-container .inventory-row-clickable:hover td,
+  .app-container .modern-table tbody tr:hover td { background: #f5f5ff !important; }
+  .app-container .ui-button:hover,
+  .app-container .alerts-tab:hover,
+  .app-container .reports-segment button:hover,
+  .app-container .dashboard-refresh-button:hover { box-shadow: 0 2px 5px rgba(24, 24, 27, 0.08); }
+}
+@media (hover: none) {
+  .app-container .inventory-product-link,
+  .app-container .dashboard-cell-primary,
+  .app-container .reports-top-name b { max-width: 100%; overflow: visible; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+  .app-container .inventory-row-clickable:active td,
+  .app-container .modern-table tbody tr:active td { background: #e0e7ff !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-container :where(button, a, [role="tab"]) { transition: none; }
+  .app-container :where(button, a, [role="tab"]):active { transform: none; }
+}

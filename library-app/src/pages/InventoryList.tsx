@@ -109,7 +109,7 @@ export default function InventoryList({ searchTerm = '' }: { searchTerm?: string
             const quarantined = item.status === 'Quarantined';
             const useFirst = activeTab === 'batch' && firstBatchByProduct.has(item.name) && visibleItems.find(row => row.name === item.name)?.id === item.id;
             return <tr key={item.id} className={`${expired ? 'inventory-row-expired' : ''} inventory-row-clickable`}>
-              <td><Link className="inventory-product-link" to={`/inventory/${item.id}`}>{item.name || item.productName || 'Product'}</Link><span className="inventory-cell-muted">{item.category || 'General'}</span></td>
+              <td><Link className="inventory-product-link" to={`/inventory/${item.id}`} title={item.name || item.productName || 'Product'}>{item.name || item.productName || 'Product'}</Link><span className="inventory-cell-muted">{item.category || 'General'}</span></td>
               <td><span className="inventory-batch">{item.batchNo || item.batchNumber || '-'} </span><span className="inventory-cell-muted">{item.location || item.storageLocation || '-'}{useFirst && <em className="use-first-tag">Use First</em>}</span></td>
               <td><strong>{item.quantity.toLocaleString()}</strong><span className="inventory-cell-muted">units</span></td>
               <td>{isAdmin ? <><span className="inventory-price">{formatGhc(item.unitCostGhs ?? item.unitPrice ?? 0)}</span><span className="inventory-cell-muted">Sell {formatGhc(item.sellingPriceGhs ?? item.unitPrice ?? 0)}</span></> : <span className="inventory-price">{formatGhc(item.sellingPriceGhs ?? item.unitPrice ?? 0)}</span>}</td>
