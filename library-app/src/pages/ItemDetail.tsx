@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ImagePlus, Pill } from 'lucide-react';
 import { useInventory } from '../api/useInventory';
@@ -7,6 +7,7 @@ import { useAuth } from '../api/useAuth';
 import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { Card } from '../components/ui/Card';
+import { Input } from '../components/ui/Input';
 
 function getRisk(expiryDate: string, nowTimestamp: number): { label: string; badgeClass: string } {
   const exp = new Date(expiryDate).getTime();
@@ -21,11 +22,13 @@ function getRisk(expiryDate: string, nowTimestamp: number): { label: string; bad
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { items, deleteItem, updateItem } = useInventory();
+  const { items, deleteItem, updateItem, recordSale } = useInventory();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [photoError, setPhotoError] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [saleQuantity, setSaleQuantity] = useState('');
+  const [saleNotice, setSaleNotice] = useState('');
   const nowTimestamp = Date.now();
 
   const item = items.find(i => i.id === id);
@@ -51,10 +54,23 @@ export default function ItemDetail() {
   const risk = getRisk(item.expiryDate, nowTimestamp);
   const diffDays = Math.floor((new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
   const totalValueAtRisk = diffDays <= 30 ? (item.quantity * item.unitPrice) : 0;
+  const canRecordSale = diffDays >= 0 && item.status !== 'Quarantined' && item.status !== 'Pending Return' && item.status !== 'Disposed' && item.quantity > 0;
 
   const handleDelete = () => {
     deleteItem(item.id);
     navigate('/inventory');
+  };
+
+  const handleRecordSale = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const units = Number(saleQuantity);
+    if (!Number.isInteger(units) || units <= 0 || units > item.quantity || !canRecordSale) {
+      setSaleNotice('Enter a whole number within the available stock.');
+      return;
+    }
+    recordSale(item.id, units);
+    setSaleNotice(`${units.toLocaleString()} units recorded as dispensed.`);
+    setSaleQuantity('');
   };
 
   const handlePhotoUpload = (file?: File) => {
@@ -118,6 +134,23 @@ export default function ItemDetail() {
             {risk.label}
           </span>
         </div>
+
+        <section className="item-sales-panel" aria-labelledby="item-sales-title">
+          <div className="item-sale-copy">
+            <h2 id="item-sales-title">Sales &amp; stock movement</h2>
+            <p>Record units dispensed to keep current stock and future Reports in sync. Earlier sales are not in the current records.</p>
+          </div>
+          <div className="item-sales-overview">
+            <div><span>Units dispensed</span><strong>{item.unitsSold === undefined ? 'Not tracked' : item.unitsSold.toLocaleString()}</strong></div>
+            <div><span>Stock remaining</span><strong>{item.quantity.toLocaleString()} units</strong></div>
+          </div>
+          {canRecordSale ? <form className="item-sale-form" onSubmit={handleRecordSale}>
+            <label htmlFor="saleQuantity">Units</label>
+            <Input id="saleQuantity" type="number" inputMode="numeric" min="1" max={item.quantity} step="1" value={saleQuantity} onChange={event => { setSaleQuantity(event.target.value); setSaleNotice(''); }} placeholder="Quantity" required />
+            <Button type="submit" disabled={!saleQuantity}>Record dispense</Button>
+            {saleNotice && <span className="item-sale-notice" role="status">{saleNotice}</span>}
+          </form> : <p className="item-sale-unavailable">Dispensing is unavailable for expired, quarantined, returned, disposed, or empty stock.</p>}
+        </section>
 
         <div className="table-responsive" style={{ marginBottom: '2rem' }}>
           <table className="modern-table">

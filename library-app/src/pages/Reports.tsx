@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, ArrowDownToLine, ClipboardCheck, DollarSign, Package, PieChart, TrendingUp, Truck, Zap } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import * as Dialog from '@radix-ui/react-dialog';
 import { useInventory } from '../api/useInventory';
 import StatCard from '../components/StatCard';
 import { formatGhc } from '../utils/currency';
@@ -9,6 +11,7 @@ type Risk = 'Safe' | 'Monitor' | 'Action' | 'Critical' | 'Expired';
 const riskColors: Record<Risk, string> = { Safe: '#16a36a', Monitor: '#e9a423', Action: '#f17b32', Critical: '#df4545', Expired: '#8290a2' };
 const riskLabel: Record<Risk, string> = { Safe: 'Safe', Monitor: 'Monitor', Action: 'Action Required', Critical: 'Critical', Expired: 'Expired' };
 const day = 86400000;
+type ReviewSelection = { kind: 'supplier' | 'velocity' | 'category' | 'risk'; name: string };
 
 export default function Reports() {
   const { items: inventoryItems = [] } = useInventory();
@@ -20,6 +23,7 @@ export default function Reports() {
   const [dateTo, setDateTo] = useState('');
   const [categoryMetric, setCategoryMetric] = useState<'quantity' | 'value'>('quantity');
   const [topSort, setTopSort] = useState<'value' | 'quantity'>('value');
+  const [reviewSelection, setReviewSelection] = useState<ReviewSelection | null>(null);
 
   const data = useMemo(() => items.map(item => {
     const diffDays = Math.floor((new Date(item.expiryDate).getTime() - now) / day);
@@ -81,8 +85,22 @@ export default function Reports() {
   }, {})).sort((a, b) => b.riskBatches / b.batches - a.riskBatches / a.batches || b.lost - a.lost);
   const velocity = ['Fast', 'Moderate', 'Slow', 'Dead'].map(name => {
     const matching = data.filter(item => (item.velocity || 'Moderate') === name);
-    return { name, units: matching.reduce((sum, item) => sum + item.quantity, 0), products: matching.length, color: name === 'Fast' ? '#16a36a' : name === 'Moderate' ? '#5363bd' : name === 'Slow' ? '#e9a423' : '#8290a2' };
+    return { name, units: matching.reduce((sum, item) => sum + item.quantity, 0), unitsSold: matching.reduce((sum, item) => sum + (item.unitsSold ?? 0), 0), hasSalesData: matching.some(item => item.unitsSold !== undefined), products: matching.length, color: name === 'Fast' ? '#16a36a' : name === 'Moderate' ? '#5363bd' : name === 'Slow' ? '#e9a423' : '#8290a2' };
   });
+
+  const reviewProducts = useMemo(() => {
+    if (!reviewSelection) return [];
+    if (reviewSelection.kind === 'supplier') return data.filter(item => (item.supplier || 'Supplier not recorded') === reviewSelection.name);
+    if (reviewSelection.kind === 'category') return data.filter(item => (item.category || 'Uncategorized') === reviewSelection.name);
+    if (reviewSelection.kind === 'risk') return data.filter(item => item.riskKey === reviewSelection.name);
+    return data.filter(item => (item.velocity || 'Moderate') === reviewSelection.name);
+  }, [data, reviewSelection]);
+  const reviewSummary = useMemo(() => ({
+    batches: reviewProducts.length,
+    currentStock: reviewProducts.reduce((sum, item) => sum + item.quantity, 0),
+    unitsSold: reviewProducts.reduce((sum, item) => sum + (item.unitsSold ?? 0), 0),
+    hasSalesData: reviewProducts.some(item => item.unitsSold !== undefined),
+  }), [reviewProducts]);
 
   // Project current stock cost into its future expiry month. Expired batches are already
   // out of the forward window, while empty months remain present to keep the 12-month axis stable.
@@ -124,7 +142,7 @@ export default function Reports() {
     <div className="reports-analytics-grid">
       <section className="reports-chart-card"><header><div><h2>Risk Distribution</h2><p>Share of inventory units by current risk band</p></div><PieChart size={20} /></header>
         <div className="reports-risk-layout"><div className="reports-donut" style={{ background: `conic-gradient(${donutStops})` }} role="img" aria-label="Inventory unit risk distribution"><div><strong>{totalUnits.toLocaleString()}</strong><span>units</span></div></div>
-          <div className="reports-legend">{riskSummary.map(item => <div key={item.risk}><i style={{ background: riskColors[item.risk] }} /><span>{riskLabel[item.risk]}</span><b>{(item.units / totalUnits * 100).toFixed(0)}%</b><small>{item.count} batches</small></div>)}</div></div>
+          <div className="reports-legend">{riskSummary.map(item => <button type="button" className="reports-legend-item" key={item.risk} onClick={() => setReviewSelection({ kind: 'risk', name: item.risk })} aria-label={`Review ${riskLabel[item.risk]} stock, ${item.count} batches`}><i style={{ background: riskColors[item.risk] }} /><span>{riskLabel[item.risk]}</span><b>{(item.units / totalUnits * 100).toFixed(0)}%</b><small>{item.count} batches</small></button>)}</div></div>
       </section>
 
       <section className="reports-chart-card"><header><div><h2>Stock Value at Risk</h2><p>Projected stock value at risk of expiry, by month, based on current inventory.</p></div><TrendingUp size={20} /></header>
@@ -134,21 +152,56 @@ export default function Reports() {
 
       <section className="reports-chart-card"><header><div><h2>Product Category Breakdown</h2><p>Compare stock distribution across categories</p></div><Package size={20} /></header>
         <div className="reports-card-tools"><div className="reports-segment"><button className={categoryMetric === 'quantity' ? 'active' : ''} onClick={() => setCategoryMetric('quantity')}>Units</button><button className={categoryMetric === 'value' ? 'active' : ''} onClick={() => setCategoryMetric('value')}>Value</button></div></div>
-        <div className="reports-category-list">{categories.map(category => { const value = categoryMetric === 'quantity' ? category.quantity : category.value; return <div className="reports-category-row" key={category.name}><div><b>{category.name}</b><span>{categoryMetric === 'quantity' ? value.toLocaleString() : formatGhc(value)}</span></div><div className="reports-bar-track"><i style={{ width: `${value / maxCategory * 100}%` }} /></div></div>; })}</div>
+        <div className="reports-category-list">{categories.map(category => { const value = categoryMetric === 'quantity' ? category.quantity : category.value; return <button type="button" className="reports-category-row reports-drilldown-row" key={category.name} onClick={() => setReviewSelection({ kind: 'category', name: category.name })} aria-label={`Review ${category.name} products`}><div><b>{category.name}</b><span>{categoryMetric === 'quantity' ? value.toLocaleString() : formatGhc(value)}</span></div><div className="reports-bar-track"><i style={{ width: `${value / maxCategory * 100}%` }} /></div></button>; })}</div>
       </section>
 
       <section className="reports-chart-card"><header><div><h2>Suppliers with Highest Expiry Rate</h2><p>Critical or expired batches by supplier</p></div><Truck size={20} /></header>
-        <div className="table-responsive"><table className="modern-table reports-compact-table"><thead><tr><th>Supplier</th><th>Batches</th><th>Critical / expired</th><th>Value lost</th></tr></thead><tbody>{suppliers.map(supplier => <tr key={supplier.name}><td><strong>{supplier.name}</strong></td><td>{supplier.batches}</td><td><span className="reports-rate-badge">{(supplier.riskBatches / supplier.batches * 100).toFixed(0)}%</span></td><td>{formatGhc(supplier.lost)}</td></tr>)}</tbody></table></div>
+        <div className="table-responsive"><table className="modern-table reports-compact-table"><thead><tr><th>Supplier</th><th>Batches</th><th>Critical / expired</th><th>Value lost</th></tr></thead><tbody>{suppliers.map(supplier => <tr key={supplier.name}><td><button type="button" className="reports-drilldown-link" onClick={() => setReviewSelection({ kind: 'supplier', name: supplier.name })}>{supplier.name}</button></td><td>{supplier.batches}</td><td><span className="reports-rate-badge">{(supplier.riskBatches / supplier.batches * 100).toFixed(0)}%</span></td><td>{formatGhc(supplier.lost)}</td></tr>)}</tbody></table></div>
       </section>
 
       <section className="reports-chart-card"><header><div><h2>Top At-Risk Products</h2><p>Highest exposure from filtered stock</p></div><AlertTriangle size={20} /></header>
         <div className="reports-card-tools"><div className="reports-segment"><button className={topSort === 'value' ? 'active' : ''} onClick={() => setTopSort('value')}>By value</button><button className={topSort === 'quantity' ? 'active' : ''} onClick={() => setTopSort('quantity')}>By quantity</button></div></div>
-        <div className="reports-top-list">{topRisk.length ? topRisk.slice(0, 8).map((item, index) => <div className="reports-top-item" key={item.id}><span className="reports-rank">{index + 1}</span><div className="reports-top-name"><b title={item.name}>{item.name}</b><small>{item.batchNo} · {riskLabel[item.riskKey]}</small></div><strong>{topSort === 'value' ? formatGhc(item.totalValue) : `${item.quantity.toLocaleString()} units`}</strong></div>) : <p className="reports-empty">No at-risk batches match these filters.</p>}</div>
+        <div className="reports-top-list">{topRisk.length ? topRisk.slice(0, 8).map((item, index) => <div className="reports-top-item" key={item.id}><span className="reports-rank">{index + 1}</span><div className="reports-top-name"><Link to={`/inventory/${item.id}`} className="reports-product-link" title={`Open ${item.name}`}>{item.name}</Link><small>{item.batchNo} · {riskLabel[item.riskKey]}</small></div><strong>{topSort === 'value' ? formatGhc(item.totalValue) : `${item.quantity.toLocaleString()} units`}</strong></div>) : <p className="reports-empty">No at-risk batches match these filters.</p>}</div>
       </section>
 
       <section className="reports-chart-card"><header><div><h2>Fast-Moving vs. Slow-Moving</h2><p>Current units by recorded turnover classification</p></div><Zap size={20} /></header>
-        <div className="reports-velocity-list">{velocity.map(item => <div className="reports-velocity-row" key={item.name}><div><span className="reports-velocity-dot" style={{ background: item.color }} /><b>{item.name === 'Dead' ? 'No movement' : `${item.name}-Moving`}</b><small>{item.products} products</small></div><div className="reports-velocity-track"><i style={{ width: `${item.units / Math.max(1, ...velocity.map(v => v.units)) * 100}%`, background: item.color }} /></div><strong>{item.units.toLocaleString()} units</strong></div>)}</div>
+        <div className="reports-velocity-list">{velocity.map(item => <button type="button" className="reports-velocity-row reports-drilldown-row" key={item.name} onClick={() => setReviewSelection({ kind: 'velocity', name: item.name })} aria-label={`Review ${item.name} moving product details`}><div><span className="reports-velocity-dot" style={{ background: item.color }} /><b>{item.name === 'Dead' ? 'No movement' : `${item.name}-Moving`}</b><small>{item.products} products · {item.hasSalesData ? `${item.unitsSold.toLocaleString()} recorded sold` : 'sales not tracked'}</small></div><div className="reports-velocity-track"><i style={{ width: `${item.units / Math.max(1, ...velocity.map(v => v.units)) * 100}%`, background: item.color }} /></div><strong>{item.units.toLocaleString()} units left</strong></button>)}</div>
       </section>
     </div>
+
+    <Dialog.Root open={reviewSelection !== null} onOpenChange={open => { if (!open) setReviewSelection(null); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="ui-dialog-overlay" />
+        <Dialog.Content className="ui-dialog-content reports-review-dialog">
+          <header className="reports-review-header">
+            <div>
+              <Dialog.Title className="ui-dialog-title">{reviewSelection?.name}{reviewSelection?.kind === 'velocity' ? ' movement review' : ' product review'}</Dialog.Title>
+              <Dialog.Description className="ui-dialog-description">
+                {reviewSelection?.kind === 'supplier' ? 'Batches and products received from this supplier.' : reviewSelection?.kind === 'category' ? 'Products currently recorded in this category.' : reviewSelection?.kind === 'risk' ? `Products currently in the ${riskLabel[reviewSelection.name as Risk]} risk band.` : 'Products grouped by their recorded stock velocity.'}
+              </Dialog.Description>
+            </div>
+          </header>
+          <div className="reports-review-summary">
+            <div><span>Batches</span><strong>{reviewSummary.batches}</strong></div>
+            <div><span>Current stock</span><strong>{reviewSummary.currentStock.toLocaleString()} units</strong></div>
+            <div><span>Units sold</span><strong>{reviewSummary.hasSalesData ? reviewSummary.unitsSold.toLocaleString() : 'Not tracked'}</strong></div>
+          </div>
+          {!reviewSummary.hasSalesData && <p className="reports-sales-note">Historical sales are not stored in the current inventory records. Current stock is shown from the live inventory data.</p>}
+          <div className="table-responsive reports-review-table-wrap">
+            {reviewProducts.length ? <table className="modern-table reports-review-table">
+              <thead><tr><th>Product / Batch</th><th>Risk</th><th>Units sold</th><th>Stock left</th><th>Expiry</th></tr></thead>
+              <tbody>{reviewProducts.map(item => <tr key={item.id}>
+                <td><Link className="reports-review-product" to={`/inventory/${item.id}`} onClick={() => setReviewSelection(null)}>{item.name}<small>{item.batchNo} · {item.category || 'Uncategorized'}</small></Link></td>
+                <td><span className={`risk-badge risk-badge--${item.riskKey.toLowerCase()}`}>{riskLabel[item.riskKey]}</span></td>
+                <td>{item.unitsSold === undefined ? 'Not tracked' : item.unitsSold.toLocaleString()}</td>
+                <td><strong>{item.quantity.toLocaleString()}</strong></td>
+                <td>{new Date(item.expiryDate).toLocaleDateString()}</td>
+              </tr>)}</tbody>
+            </table> : <p className="reports-empty">No products are recorded in this group.</p>}
+          </div>
+          <footer className="ui-dialog-footer"><Dialog.Close asChild><Button variant="outline">Close</Button></Dialog.Close></footer>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   </div>;
 }

@@ -17,6 +17,7 @@ interface InventoryContextType {
   requestSupplierReturn: (id: string, note?: string) => void;
   processSupplierReturn: (id: string) => void;
   disposeItem: (id: string, reason: WorkflowReason, note?: string) => void;
+  recordSale: (id: string, units: number) => void;
   resetToMock: () => void;
 }
 
@@ -32,6 +33,7 @@ function sanitizeItems(parsed: any[]): InventoryItem[] {
     batchNo: String(item.batchNo || item.batchNumber || `BATCH-${1000 + idx}`),
     batchNumber: String(item.batchNumber || item.batchNo || `BATCH-${1000 + idx}`),
     quantity: typeof item.quantity === 'number' && !isNaN(item.quantity) ? item.quantity : 0,
+    unitsSold: typeof item.unitsSold === 'number' && Number.isFinite(item.unitsSold) ? Math.max(0, item.unitsSold) : undefined,
     unitPrice: typeof item.unitPrice === 'number' && !isNaN(item.unitPrice) ? item.unitPrice : (typeof item.unitCostGhs === 'number' ? item.unitCostGhs : 10.0),
     unitCostGhs: typeof item.unitCostGhs === 'number' && !isNaN(item.unitCostGhs) ? item.unitCostGhs : (typeof item.unitPrice === 'number' ? item.unitPrice : 10.0),
     sellingPriceGhs: typeof item.sellingPriceGhs === 'number' && !isNaN(item.sellingPriceGhs) ? item.sellingPriceGhs : undefined,
@@ -184,6 +186,31 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     }));
   };
 
+  const recordSale = (id: string, units: number) => {
+    if (!user || !Number.isInteger(units) || units <= 0) return;
+    const at = new Date().toISOString();
+    setItems(prev => prev.map(item => {
+      const expired = new Date(item.expiryDate).getTime() < Date.now();
+      const unavailable = item.status === 'Quarantined' || item.status === 'Pending Return' || item.status === 'Disposed';
+      if (item.id !== id || expired || unavailable || item.quantity < units) return item;
+      const activity: InventoryActivity = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        action: `Dispensed ${units.toLocaleString()} units`,
+        actorId: user.id,
+        actorName: user.name,
+        at,
+      };
+      const quantity = item.quantity - units;
+      return {
+        ...item,
+        quantity,
+        unitsSold: (item.unitsSold ?? 0) + units,
+        status: quantity === 0 ? 'Low Stock' : item.status,
+        activityLog: [...(item.activityLog ?? []), activity],
+      };
+    }));
+  };
+
   const resetToMock = () => {
     localStorage.removeItem('expireguard_items');
     setItems(mockItems);
@@ -199,7 +226,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   })), [items, user?.role]);
 
   return (
-    <InventoryContext.Provider value={{ items: roleScopedItems, loading, error, addItem, deleteItem, updateItem, acknowledgeItem, flagItemForReview, closeAdminFlag, quarantineItem, addItemNote, requestSupplierReturn, processSupplierReturn, disposeItem, resetToMock }}>
+    <InventoryContext.Provider value={{ items: roleScopedItems, loading, error, addItem, deleteItem, updateItem, acknowledgeItem, flagItemForReview, closeAdminFlag, quarantineItem, addItemNote, requestSupplierReturn, processSupplierReturn, disposeItem, recordSale, resetToMock }}>
       {children}
     </InventoryContext.Provider>
   );

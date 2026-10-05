@@ -6,6 +6,7 @@ export interface InventoryItem {
   batchNo: string;
   batchNumber?: string;
   quantity: number;
+  unitsSold?: number;
   unitPrice: number;
   unitCostGhs?: number;
   sellingPriceGhs?: number;
