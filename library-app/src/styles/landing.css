@@ -1010,14 +1010,64 @@
   border-radius: 999px;
 }
 
-.mock-phone img {
+.mock-phone-screen {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 20px;
-  display: block;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #fff;
+  color: var(--text-dark);
 }
+
+.mock-status-bar {
+  height: 24px;
+  padding: 3px 10px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #182536;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: .01em;
+}
+
+.mock-status-icons { display: flex; align-items: center; gap: 3px; }
+.mock-status-icons svg { display: block; width: 13px; height: 11px; }
+.mock-status-icons svg:last-child { width: 16px; }
+
+.mock-login-content {
+  width: 100%;
+  max-width: none;
+  padding: 7px 14px 10px;
+}
+
+.mock-login-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.mock-login-brand .sky-brand-icon {
+  width: 25px;
+  height: 25px;
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.mock-login-brand .sky-brand-name { font-size: 13px; }
+.mock-login-content .auth-form-header { margin-bottom: 11px; }
+.mock-login-content .auth-form-title { margin-bottom: 2px; font-size: 17px; line-height: 1.15; }
+.mock-login-content .auth-form-sub { font-size: 8px; line-height: 1.45; }
+.mock-auth-field { margin-bottom: 8px; }
+.mock-auth-field .auth-label { margin-bottom: 3px; font-size: 8px; }
+.mock-auth-input { height: 29px; padding: 6px 8px; display: flex; align-items: center; color: #98a2b3; font-size: 8px; font-weight: 400; }
+.mock-auth-password { letter-spacing: .13em; }
+.mock-forgot-link { display: block; margin-top: -2px; color: var(--sky-600); font-size: 8px; font-weight: 650; text-align: right; text-decoration: none; }
+.mock-login-submit { margin-top: 9px; padding: 8px 10px; border-radius: 7px; font-size: 10px; }
+.mock-login-content .mock-register-link { margin-top: 11px; font-size: 8px; }
+.mock-login-content .auth-switch-link a { font-size: inherit; }
 
 .sky-mobile-copy h2 {
   margin-bottom: 0.8rem;

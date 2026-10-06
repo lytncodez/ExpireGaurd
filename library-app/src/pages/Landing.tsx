@@ -450,7 +450,41 @@ export default function Landing() {
             <div className="sky-mobile-mockup">
               <div className="mock-phone">
                 <div className="mock-notch" />
-                <img src="/carousel-2.jpg" alt="Mobile dashboard preview" />
+                <div className="mock-phone-screen" aria-label="ExpiryGuard sign-in screen preview">
+                  <div className="mock-status-bar" aria-hidden="true">
+                    <span>9:41</span>
+                    <div className="mock-status-icons">
+                      <svg viewBox="0 0 18 14" fill="currentColor"><rect x="1" y="8" width="3" height="5" rx=".7"/><rect x="6" y="5" width="3" height="8" rx=".7"/><rect x="11" y="2" width="3" height="11" rx=".7"/></svg>
+                      <svg viewBox="0 0 18 14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M2 5.3a10.2 10.2 0 0 1 14 0M4.8 8.1a6.2 6.2 0 0 1 8.4 0M7.5 10.8a2.4 2.4 0 0 1 3 0"/><circle cx="9" cy="12" r=".7" fill="currentColor" stroke="none"/></svg>
+                      <svg viewBox="0 0 22 14" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1" y="2" width="17" height="10" rx="2"/><path d="M20 5v4"/><rect x="3" y="4" width="12" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
+                    </div>
+                  </div>
+                  <div className="mock-login-content">
+                    <div className="mock-login-brand">
+                      <span className="sky-brand-icon" aria-hidden="true">
+                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                        </svg>
+                      </span>
+                      <span className="sky-brand-name">ExpiryGuard</span>
+                    </div>
+                    <div className="auth-form-header">
+                      <h2 className="auth-form-title">Welcome back</h2>
+                      <p className="auth-form-sub">Smarter inventory, safer tomorrow.</p>
+                    </div>
+                    <div className="mock-auth-field">
+                      <label className="auth-label">Email address</label>
+                      <div className="auth-input mock-auth-input">name@pharmacy.com</div>
+                    </div>
+                    <div className="mock-auth-field">
+                      <label className="auth-label">Password</label>
+                      <div className="auth-input mock-auth-input mock-auth-password">••••••••••</div>
+                    </div>
+                    <a className="mock-forgot-link" href="#signin-preview" onClick={event => event.preventDefault()}>Forgot password?</a>
+                    <button type="button" className="auth-submit-btn mock-login-submit" aria-label="Log in preview">Log In</button>
+                    <div className="auth-switch-link mock-register-link">Don&apos;t have an account? <a href="#register-preview" onClick={event => event.preventDefault()}>Register</a></div>
+                  </div>
+                </div>
               </div>
             </div>
 
