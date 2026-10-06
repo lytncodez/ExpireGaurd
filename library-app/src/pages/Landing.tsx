@@ -24,26 +24,29 @@ const appPreviewCards = [
   { title: 'Reports', accent: 'Navy', variant: 'reports' },
 ];
 
-const heroSlides = [
+const heroSlides: {
+  image: string;
+  alt: string;
+  credit?: string;
+  source?: string;
+  license?: string;
+  licenseUrl?: string;
+}[] = [
   {
-    image:
-      'https://images.pexels.com/photos/8657368/pexels-photo-8657368.jpeg?auto=compress&cs=tinysrgb&w=1600',
-    alt: 'Pharmacist assisting a customer in a pharmacy with medicine shelves',
+    image: '/hero-slide-1.jpg',
+    alt: 'Modern Ghanaian pharmacy interior with organized shelving and pharmacy staff managing inventory',
   },
   {
-    image:
-      'https://images.pexels.com/photos/14797855/pexels-photo-14797855.jpeg?auto=compress&cs=tinysrgb&w=1600',
-    alt: 'Pharmacist beside medicine shelves in a pharmacy',
+    image: '/hero-slide-2.jpg',
+    alt: 'Black Ghanaian pharmacist in lab coat scanning medicine batches and verifying expiry dates',
   },
   {
-    image:
-      'https://images.pexels.com/photos/8657287/pexels-photo-8657287.jpeg?auto=compress&cs=tinysrgb&w=1600',
-    alt: 'Pharmacy staff working together at a medicine counter',
+    image: '/hero-slide-3.jpg',
+    alt: 'Ghanaian pharmacy dispensing counter with pharmacist consulting and handing medicine to a customer',
   },
   {
-    image:
-      'https://images.pexels.com/photos/9629685/pexels-photo-9629685.jpeg?auto=compress&cs=tinysrgb&w=1600',
-    alt: 'Pharmacist organizing medications in front of a pharmacy cabinet',
+    image: '/hero-slide-4.jpg',
+    alt: 'Close-up of organized medicine boxes and syrups arranged on modern pharmacy shelves',
   },
 ];
 
@@ -235,6 +238,21 @@ export default function Landing() {
               />
             ))}
           </div>
+          {heroSlides[activeSlide].credit && (
+            <div className="sky-hero-photo-credit">
+              <a href={heroSlides[activeSlide].source} target="_blank" rel="noreferrer">
+                {heroSlides[activeSlide].credit}
+              </a>
+              {heroSlides[activeSlide].license && (
+                <>
+                  <span aria-hidden="true"> · </span>
+                  <a href={heroSlides[activeSlide].licenseUrl} target="_blank" rel="noreferrer">
+                    {heroSlides[activeSlide].license}
+                  </a>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
