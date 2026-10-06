@@ -80,7 +80,7 @@ export default function InventoryList({ searchTerm = '' }: { searchTerm?: string
   }, [activeTab, visibleItems]);
 
   return <div className="page-body inventory-page">
-    <div className="inventory-heading">
+    <div className="inventory-heading" data-tour="inventory-overview">
       <div><p className="inventory-eyebrow">STOCK MANAGEMENT</p><h1>Inventory</h1><p className="inventory-subtitle">Your full stock and batch repository, with expiry risk and FEFO priority in view.</p></div>
       <Link to="/add" className="btn-primary inventory-add">+ Add Stock</Link>
     </div>

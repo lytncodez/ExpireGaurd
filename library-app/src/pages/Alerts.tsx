@@ -165,7 +165,7 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
         </div>
       </div>
 
-      <div className="stat-card-grid alerts-stat-grid">
+      <div className="stat-card-grid alerts-stat-grid" data-tour="alerts-summary">
         <StatCard label="Active Alerts" value={alertsList.length} context="Across all non-safe batches" icon={Bell} tone="navy" />
         <StatCard label="Critical" value={alertsList.filter(alert => alert.riskBand === 'Critical').length} context="Expiring within 7 days" icon={AlertTriangle} tone="critical" />
         <StatCard label="Near Expiry" value={alertsList.filter(alert => alert.riskBand === 'Expiring Soon').length} context="Within the 90-day watch window" icon={Clock3} tone="monitor" />

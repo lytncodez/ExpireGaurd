@@ -217,7 +217,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
   return (
     <div className="page-body dashboard-page">
       <div className="dashboard-content">
-        <header className="dashboard-overview-header">
+        <header className="dashboard-overview-header" data-tour="dashboard-overview">
           <div>
             <div className="dashboard-overview-title-row">
               <h1>
@@ -235,7 +235,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
 
         </header>
 
-        {spotlightItem && <section className="product-spotlight" onPointerEnter={() => setSpotlightPaused(true)} onPointerLeave={() => setSpotlightPaused(false)} aria-label="Product spotlight">
+        {spotlightItem && <section className="product-spotlight" data-tour="product-spotlight" onPointerEnter={() => setSpotlightPaused(true)} onPointerLeave={() => setSpotlightPaused(false)} aria-label="Product spotlight">
           <div key={spotlightItem.id} className="product-spotlight-image" style={spotlightItem.photoUrl ? { backgroundImage: `url("${spotlightItem.photoUrl}")` } : undefined}>
             {!spotlightItem.photoUrl && <div className="product-spotlight-placeholder" aria-hidden="true"><Package size={78} strokeWidth={1.1} /></div>}
             <div className="product-spotlight-shade" />
@@ -259,7 +259,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
         </section>
 
         <section className="dashboard-panel-grid">
-          <div className="dashboard-panel dashboard-decision-panel">
+          <div className="dashboard-panel dashboard-decision-panel" data-tour="decision-matrix">
             <div className="dashboard-panel-heading">
               <div>
                 <p className="dashboard-panel-title">Urgent Decision Matrix</p>

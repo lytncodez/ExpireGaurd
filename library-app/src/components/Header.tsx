@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
-import { Mic, MicOff } from 'lucide-react';
+import { CircleHelp, Mic, MicOff } from 'lucide-react';
 import { useAuth } from '../api/useAuth';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -79,6 +79,7 @@ export default function Header({ searchTerm, setSearchTerm }: HeaderProps) {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="search-input"
+            data-tour="global-search"
           />
           <Button
             type="button"
@@ -105,6 +106,10 @@ export default function Header({ searchTerm, setSearchTerm }: HeaderProps) {
             </Button>
           )}
         </div>
+
+        <Button type="button" variant="ghost" size="icon" className="header-help-button" aria-label="Restart app tour" title="Restart app tour" onClick={() => window.dispatchEvent(new CustomEvent('expireguard:restart-tour'))}>
+          <CircleHelp size={19} aria-hidden="true" />
+        </Button>
 
         <Link to="/alerts" className="icon-btn" title="View Expiry Alerts" style={{ position: 'relative', textDecoration: 'none' }}>
           <span className="notification-dot" />

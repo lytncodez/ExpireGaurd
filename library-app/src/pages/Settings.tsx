@@ -253,6 +253,7 @@ export default function Settings() {
             Configure pharmaceutical expiry thresholds, alert schedules, user access permissions, and dispensary metadata.
           </p>
         </div>
+        <button type="button" className="tour-restart-button" onClick={() => window.dispatchEvent(new CustomEvent('expireguard:restart-tour'))}>Restart guided tour</button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>

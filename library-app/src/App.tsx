@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import MobileBottomNav from './components/MobileBottomNav';
+import OnboardingTour from './components/OnboardingTour';
 import Dashboard from './pages/Dashboard';
 import InventoryList from './pages/InventoryList';
 import AddItem from './pages/AddItem';
@@ -153,6 +154,7 @@ function AppShell() {
         {/* Persistent bottom tab bar for mobile viewports */}
         <MobileBottomNav />
       </div>
+      <OnboardingTour />
     </div>
   );
 }

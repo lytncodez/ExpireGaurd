@@ -188,7 +188,7 @@ export default function AddItem() {
   };
 
   return (
-    <div className="page-body">
+    <div className="page-body" data-tour="add-inventory">
       {/* Top Breadcrumb & Switcher */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
         <div>

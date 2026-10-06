@@ -51,6 +51,7 @@ export default function Sidebar({
         end={item.to !== '/inventory'}
         aria-label={item.label}
         title={isCollapsed ? item.label : undefined}
+        data-tour={`nav-${item.to.slice(1)}`}
         className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
       >
         <span className="nav-icon" aria-hidden="true"><Icon size={19} strokeWidth={1.8} /></span>

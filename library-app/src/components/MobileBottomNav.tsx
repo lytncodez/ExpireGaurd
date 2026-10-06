@@ -16,6 +16,7 @@ export default function MobileBottomNav() {
           end={to !== '/inventory'}
           aria-label={label}
           title={label}
+          data-tour={`nav-${to.slice(1)}`}
           className={({ isActive }) => `mobile-nav-item${to === '/add' ? ' mobile-nav-item--add' : ''}${isActive ? ' active' : ''}`}
         >
           <span className={`mobile-nav-icon${to === '/add' ? ' mobile-nav-icon--fab' : ''}`} aria-hidden="true">
