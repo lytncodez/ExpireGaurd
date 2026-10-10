@@ -1,0 +1,315 @@
+diff --git a/backend/alembic/versions/002_sync_live_models.py b/backend/alembic/versions/002_sync_live_models.py
+new file mode 100644
+index 0000000..25e44a9
+--- /dev/null
++++ b/backend/alembic/versions/002_sync_live_models.py
+@@ -0,0 +1,49 @@
++"""Sync database columns with the live ORM models."""
++
++from alembic import op
++import sqlalchemy as sa
++
++
++revision = "002_sync_live_models"
++down_revision = "001_initial"
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    op.add_column("users", sa.Column("phone", sa.String(), nullable=True))
++
++    op.add_column("products", sa.Column("barcode", sa.String(), nullable=True))
++    op.add_column("products", sa.Column("brand", sa.String(), nullable=True))
++    op.add_column("products", sa.Column("unit", sa.String(), nullable=True))
++    op.add_column("products", sa.Column("selling_price", sa.Float(), nullable=True))
++    op.add_column("products", sa.Column("cost_price", sa.Float(), nullable=True))
++
++    op.add_column("alerts", sa.Column("severity", sa.String(), nullable=False, server_default="LOW"))
++    op.add_column("alerts", sa.Column("recipient_phone", sa.String(), nullable=True))
++    op.add_column("alerts", sa.Column("sms_status", sa.String(), nullable=True, server_default="PENDING"))
++    op.add_column("alerts", sa.Column("sms_sent", sa.Boolean(), nullable=True, server_default=sa.false()))
++    op.add_column("alerts", sa.Column("sms_sent_at", sa.DateTime(), nullable=True))
++    op.add_column("alerts", sa.Column("resolved_at", sa.DateTime(), nullable=True))
++    op.add_column("alerts", sa.Column("sms_error", sa.String(), nullable=True))
++    op.create_index("ix_alerts_severity", "alerts", ["severity"])
++    op.create_index("ix_alerts_sms_status", "alerts", ["sms_status"])
++
++
++def downgrade() -> None:
++    op.drop_index("ix_alerts_sms_status", table_name="alerts")
++    op.drop_index("ix_alerts_severity", table_name="alerts")
++    op.drop_column("alerts", "sms_error")
++    op.drop_column("alerts", "resolved_at")
++    op.drop_column("alerts", "sms_sent_at")
++    op.drop_column("alerts", "sms_sent")
++    op.drop_column("alerts", "sms_status")
++    op.drop_column("alerts", "recipient_phone")
++    op.drop_column("alerts", "severity")
++
++    op.drop_column("products", "cost_price")
++    op.drop_column("products", "selling_price")
++    op.drop_column("products", "unit")
++    op.drop_column("products", "brand")
++    op.drop_column("products", "barcode")
++    op.drop_column("users", "phone")
+diff --git a/backend/alembic/versions/003_sync_sales_model.py b/backend/alembic/versions/003_sync_sales_model.py
+new file mode 100644
+index 0000000..0367bdd
+--- /dev/null
++++ b/backend/alembic/versions/003_sync_sales_model.py
+@@ -0,0 +1,34 @@
++"""Sync sales columns with the live ORM model."""
++
++from alembic import op
++import sqlalchemy as sa
++
++
++revision = "003_sync_sales_model"
++down_revision = "002_sync_live_models"
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    with op.batch_alter_table("sales") as batch_op:
++        batch_op.alter_column("quantity_sold", new_column_name="quantity")
++        batch_op.alter_column("revenue", new_column_name="total_amount")
++        batch_op.alter_column(
++            "sale_date",
++            new_column_name="sold_at",
++            existing_type=sa.Date(),
++            type_=sa.DateTime(),
++        )
++
++
++def downgrade() -> None:
++    with op.batch_alter_table("sales") as batch_op:
++        batch_op.alter_column("quantity", new_column_name="quantity_sold")
++        batch_op.alter_column("total_amount", new_column_name="revenue")
++        batch_op.alter_column(
++            "sold_at",
++            new_column_name="sale_date",
++            existing_type=sa.DateTime(),
++            type_=sa.Date(),
++        )
+diff --git a/backend/app/core/config.py b/backend/app/core/config.py
+index 07df9bb..1acb1d0 100644
+--- a/backend/app/core/config.py
++++ b/backend/app/core/config.py
+@@ -3,8 +3,6 @@ Application configuration loaded from environment variables.
+ Uses pydantic-settings for validation and type safety.
+ """
+ 
+-import os
+-
+ from pydantic_settings import BaseSettings, SettingsConfigDict
+ 
+ 
+@@ -23,13 +21,14 @@ class Settings(BaseSettings):
+     access_token_expire_minutes: int = 30
+     app_name: str = "ExpireGuard"
+     debug: bool = False
++    sms_provider: str = "MOCK"
++    twilio_account_sid: str = ""
++    twilio_auth_token: str = ""
++    twilio_phone_number: str = ""
++    africastalking_api_key: str = ""
++    africastalking_username: str = ""
++    anthropic_api_key: str = ""
++    ai_model: str = "claude-sonnet-4-6"
+ 
+ 
+ settings = Settings()
+-
+-sms_provider: str = os.getenv("SMS_PROVIDER", "MOCK")
+-twilio_account_sid: str = os.getenv("TWILIO_ACCOUNT_SID", "")
+-twilio_auth_token: str = os.getenv("TWILIO_AUTH_TOKEN", "")
+-twilio_phone_number: str = os.getenv("TWILIO_PHONE_NUMBER", "")
+-anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+-ai_model: str = os.getenv("AI_MODEL", "claude-sonnet-4-6")
+\ No newline at end of file
+diff --git a/backend/app/routes/dashboard.py b/backend/app/routes/dashboard.py
+index 0b63ba1..8387844 100644
+--- a/backend/app/routes/dashboard.py
++++ b/backend/app/routes/dashboard.py
+@@ -2,7 +2,7 @@
+ 
+ from fastapi import APIRouter, Depends
+ from sqlalchemy.orm import Session
+-from datetime import date
++from datetime import date, datetime, timedelta
+ 
+ from app.core.database import get_db
+ from app.models.batch import Batch, ExpiryStatus
+@@ -60,14 +60,16 @@ def get_dashboard_summary(db: Session = Depends(get_db), user_id: int = 1):
+     ).count()
+     
+     # Sales stats (today)
+-    today = date.today()
++    today = datetime.combine(date.today(), datetime.min.time())
++    tomorrow = today + timedelta(days=1)
+     sales_today = db.query(Sale).filter(
+         Sale.product_id.in_(product_ids),
+-        Sale.sale_date == today
++        Sale.sold_at >= today,
++        Sale.sold_at < tomorrow,
+     ).all()
+-    
+-    total_sales = sum(s.quantity_sold for s in sales_today)
+-    total_revenue = sum(s.revenue for s in sales_today)
++
++    total_sales = sum(s.quantity for s in sales_today)
++    total_revenue = sum(s.total_amount for s in sales_today)
+     
+     return {
+         "total_products": len(products),
+diff --git a/backend/app/services/csv_service.py b/backend/app/services/csv_service.py
+index 1ea0f54..eac60e0 100644
+--- a/backend/app/services/csv_service.py
++++ b/backend/app/services/csv_service.py
+@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
+ 
+ from app.models.batch import Batch
+ from app.models.product import Product
+-from app.services.alert_service import create_alert_for_batch
+-from app.services.expiry_service import update_batch_expiry_status
++from app.models.user import User
++from app.services.alert_service import process_batch_alerts
+ 
+ 
+ def parse_csv(contents: bytes):
+@@ -65,6 +65,9 @@ def import_csv(db: Session, contents: bytes, user_id: int) -> dict:
+     products_created = 0
+     batches_created = 0
+     errors_list = []
++    user = db.query(User).filter(User.id == user_id).first()
++    if not user:
++        raise ValueError(f"User {user_id} does not exist")
+ 
+     for idx, row in enumerate(rows, start=2):
+         try:
+@@ -95,8 +98,7 @@ def import_csv(db: Session, contents: bytes, user_id: int) -> dict:
+             db.add(batch)
+             db.flush()
+ 
+-            update_batch_expiry_status(db, batch)
+-            create_alert_for_batch(db, batch)
++            process_batch_alerts(db, batch, user.phone)
+             batches_created += 1
+         except Exception as exc:
+             errors_list.append(f"Row {idx}: {exc}")
+diff --git a/backend/app/tests/test_csv_flow.py b/backend/app/tests/test_csv_flow.py
+new file mode 100644
+index 0000000..3825d2a
+--- /dev/null
++++ b/backend/app/tests/test_csv_flow.py
+@@ -0,0 +1,89 @@
++from datetime import date, timedelta
++
++from alembic import command
++from alembic.config import Config
++from sqlalchemy import create_engine, inspect
++
++from app.core.config import settings
++from app.models.alert import Alert, AlertType, SMSStatus
++from app.models.batch import Batch, ExpiryStatus
++from app.models.user import User
++
++
++def test_csv_upload_creates_critical_alert_and_sends_sms(client, db):
++    db.add(
++        User(
++            id=1,
++            email="csv-flow@example.com",
++            hashed_password="unused",
++            full_name="CSV Flow",
++            phone="+233501234567",
++        )
++    )
++    db.commit()
++
++    expiry_date = (date.today() + timedelta(days=1)).isoformat()
++    csv_data = (
++        "product_name,sku,batch_number,quantity,expiry_date\n"
++        f"Expiry Flow Test,EXP-FLOW-001,BATCH-TOMORROW,10,{expiry_date}\n"
++    )
++
++    response = client.post(
++        "/imports/csv",
++        files={"file": ("inventory.csv", csv_data, "text/csv")},
++    )
++
++    assert response.status_code == 200
++    assert response.json() == {
++        "status": "success",
++        "products_created": 1,
++        "batches_created": 1,
++        "errors": [],
++    }
++
++    batch = db.query(Batch).one()
++    assert batch.status == ExpiryStatus.CRITICAL
++    assert batch.days_remaining == 1
++
++    alert = db.query(Alert).one()
++    assert alert.alert_type == AlertType.CRITICAL
++    assert alert.recipient_phone == "+233501234567"
++    assert alert.sms_status == SMSStatus.SENT
++    assert alert.sms_sent is True
++
++    dashboard = client.get("/dashboard/summary")
++    assert dashboard.status_code == 200
++    assert dashboard.json()["critical"] == 1
++    assert dashboard.json()["unread_alerts"] == 1
++
++
++def test_initial_migration_matches_live_models(tmp_path, monkeypatch):
++    database_path = tmp_path / "migration.db"
++    database_url = f"sqlite:///{database_path}"
++    monkeypatch.setattr(settings, "database_url", database_url)
++
++    config = Config("alembic.ini")
++    command.upgrade(config, "head")
++
++    inspector = inspect(create_engine(database_url))
++    assert {column["name"] for column in inspector.get_columns("products")} >= {
++        "barcode",
++        "brand",
++        "unit",
++        "selling_price",
++        "cost_price",
++    }
++    assert {column["name"] for column in inspector.get_columns("alerts")} >= {
++        "severity",
++        "recipient_phone",
++        "sms_status",
++        "sms_sent",
++        "sms_sent_at",
++        "resolved_at",
++        "sms_error",
++    }
++    assert {column["name"] for column in inspector.get_columns("sales")} >= {
++        "quantity",
++        "total_amount",
++        "sold_at",
++    }
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index e50e8dd..3218a03 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -3,6 +3,7 @@ uvicorn[standard]==0.24.0
+ sqlalchemy>=2.0.36,<3.0.0
+ alembic==1.13.0
+ pydantic-settings>=2.2.1
++email-validator>=2.0.0
+ python-jose[cryptography]==3.3.0
+ passlib[bcrypt]==1.7.4
+ python-multipart==0.0.6
+@@ -10,4 +11,4 @@ python-dotenv==1.0.0
+ httpx==0.25.2
+ anthropic==0.25.0
+ twilio==8.10.0
+-pytest>=8.0.0
+\ No newline at end of file
++pytest>=8.0.0
