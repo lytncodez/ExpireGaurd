@@ -8,29 +8,29 @@
   --border-card: #DCE7F7;
   --border-subtle: #E9F0FF;
   
-  /* Brand Colors: Deep Blue */
-  --brand-navy: #0F172A;
-  --brand-indigo: #1D4ED8;
-  --brand-indigo-light: #DBEAFE;
-  --brand-indigo-hover: #1E40AF;
-  --color-primary: #2563EB;
-  --color-primary-hover: #1D4ED8;
-  --color-primary-light: #DBEAFE;
+  /* Brand Colors: Sky Blue (matching landing page) */
+  --brand-navy: #0E2433;
+  --brand-indigo: #0284C7;
+  --brand-indigo-light: #E0F2FE;
+  --brand-indigo-hover: #0369A1;
+  --color-primary: #0284C7;
+  --color-primary-hover: #0369A1;
+  --color-primary-light: #E0F2FE;
 
   /* Text Hierarchy */
-  --text-main: #0F172A;
+  --text-main: #0E2433;
   --text-body: #334155;
   --text-muted: #64748B;
   --text-subtle: #94A3B8;
   
-  /* Sidebar (Desktop) */
-  --sidebar-bg: #0F172A;
-  --sidebar-border: #1E293B;
-  --sidebar-text: #E2E8F0;
-  --sidebar-text-muted: #94A3B8;
-  --sidebar-active-bg: #2563EB;
+  /* Sidebar (Desktop) - Light Sky Blue theme matching landing page */
+  --sidebar-bg: #F0F7FF;
+  --sidebar-border: rgba(2, 132, 199, 0.16);
+  --sidebar-text: #334155;
+  --sidebar-text-muted: #64748B;
+  --sidebar-active-bg: #0284C7;
   --sidebar-active-text: #FFFFFF;
-  --sidebar-hover-bg: #1E293B;
+  --sidebar-hover-bg: rgba(2, 132, 199, 0.08);
 
   /* Functional Risk Color Palette (Safe=green, Monitor=amber, Action Required=orange, Critical=red, Expired=grey) */
   --risk-safe: #10B981;
