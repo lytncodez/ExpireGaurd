@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { formatGhc } from '../utils/currency';
+import CoreFeaturesVideoSection from '../components/CoreFeaturesVideoSection';
 import '../styles/landing.css';
 
 const navItems = ['How It Works', 'Features', 'Pricing', 'About'];
@@ -32,23 +33,23 @@ const heroSlides: {
   license?: string;
   licenseUrl?: string;
 }[] = [
-  {
-    image: '/hero-slide-1.jpg',
-    alt: 'Modern Ghanaian pharmacy interior with organized shelving and pharmacy staff managing inventory',
-  },
-  {
-    image: '/hero-slide-2.jpg',
-    alt: 'Black Ghanaian pharmacist in lab coat scanning medicine batches and verifying expiry dates',
-  },
-  {
-    image: '/hero-slide-3.jpg',
-    alt: 'Ghanaian pharmacy dispensing counter with pharmacist consulting and handing medicine to a customer',
-  },
-  {
-    image: '/hero-slide-4.jpg',
-    alt: 'Close-up of organized medicine boxes and syrups arranged on modern pharmacy shelves',
-  },
-];
+    {
+      image: '/hero-slide-1.jpg',
+      alt: 'Modern Ghanaian pharmacy interior with organized shelving and pharmacy staff managing inventory',
+    },
+    {
+      image: '/hero-slide-2.jpg',
+      alt: 'Black Ghanaian pharmacist in lab coat scanning medicine batches and verifying expiry dates',
+    },
+    {
+      image: '/hero-slide-3.jpg',
+      alt: 'Ghanaian pharmacy dispensing counter with pharmacist consulting and handing medicine to a customer',
+    },
+    {
+      image: '/hero-slide-4.jpg',
+      alt: 'Close-up of organized medicine boxes and syrups arranged on modern pharmacy shelves',
+    },
+  ];
 
 const whyPoints = [
   'Reduce expiry losses before they hit your margins',
@@ -298,16 +299,10 @@ export default function Landing() {
             <h2>Everything your pharmacy needs to stay ahead</h2>
           </div>
 
-          <div className="sky-feature-grid">
-            {coreFeatures.map((feature) => (
-              <div key={feature.label} className="sky-feature-card">
-                <div className={`sky-feature-icon sky-feature-icon--${feature.tone}`}>
-                  {featureIcons[feature.icon as keyof typeof featureIcons]}
-                </div>
-                <span>{feature.label}</span>
-              </div>
-            ))}
-          </div>
+          <CoreFeaturesVideoSection
+            features={coreFeatures}
+            featureIcons={featureIcons}
+          />
         </div>
       </section>
 
@@ -472,9 +467,9 @@ export default function Landing() {
                   <div className="mock-status-bar" aria-hidden="true">
                     <span>9:41</span>
                     <div className="mock-status-icons">
-                      <svg viewBox="0 0 18 14" fill="currentColor"><rect x="1" y="8" width="3" height="5" rx=".7"/><rect x="6" y="5" width="3" height="8" rx=".7"/><rect x="11" y="2" width="3" height="11" rx=".7"/></svg>
-                      <svg viewBox="0 0 18 14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M2 5.3a10.2 10.2 0 0 1 14 0M4.8 8.1a6.2 6.2 0 0 1 8.4 0M7.5 10.8a2.4 2.4 0 0 1 3 0"/><circle cx="9" cy="12" r=".7" fill="currentColor" stroke="none"/></svg>
-                      <svg viewBox="0 0 22 14" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1" y="2" width="17" height="10" rx="2"/><path d="M20 5v4"/><rect x="3" y="4" width="12" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
+                      <svg viewBox="0 0 18 14" fill="currentColor"><rect x="1" y="8" width="3" height="5" rx=".7" /><rect x="6" y="5" width="3" height="8" rx=".7" /><rect x="11" y="2" width="3" height="11" rx=".7" /></svg>
+                      <svg viewBox="0 0 18 14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M2 5.3a10.2 10.2 0 0 1 14 0M4.8 8.1a6.2 6.2 0 0 1 8.4 0M7.5 10.8a2.4 2.4 0 0 1 3 0" /><circle cx="9" cy="12" r=".7" fill="currentColor" stroke="none" /></svg>
+                      <svg viewBox="0 0 22 14" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1" y="2" width="17" height="10" rx="2" /><path d="M20 5v4" /><rect x="3" y="4" width="12" height="6" rx="1" fill="currentColor" stroke="none" /></svg>
                     </div>
                   </div>
                   <div className="mock-login-content">

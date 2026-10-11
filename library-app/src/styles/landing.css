@@ -626,6 +626,325 @@
   color: var(--text-dark);
 }
 
+/* ==========================================================================
+   Core Features Video Showcase & SaaS Explainer Player
+   ========================================================================== */
+
+.sky-video-showcase-wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.sky-video-mockup-frame {
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  border-radius: 20px;
+  background: #091522;
+  overflow: hidden;
+  margin-bottom: 2.25rem;
+  box-shadow: 0 20px 48px -12px rgba(2, 132, 199, 0.2), 0 4px 16px rgba(15, 35, 48, 0.08);
+  position: relative;
+}
+
+.sky-video-window-bar {
+  height: 46px;
+  background: #0c1c2c;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+}
+
+.sky-video-dots {
+  display: flex;
+  gap: 7px;
+}
+
+.sky-video-dots .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.sky-video-window-title {
+  color: #94a3b8;
+  font-size: 0.82rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sky-video-title-icon {
+  color: #38bdf8;
+}
+
+.sky-video-window-badge {
+  background: rgba(2, 132, 199, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #38bdf8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sky-video-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  animation: pulseLiveDot 2s infinite ease-in-out;
+}
+
+@keyframes pulseLiveDot {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0.6;
+  }
+}
+
+.sky-video-player-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #071018;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sky-video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sky-video-fallback {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.sky-video-fallback-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sky-video-fallback-msg {
+  position: absolute;
+  bottom: 2rem;
+  left: 2rem;
+  right: 2rem;
+  background: rgba(11, 23, 35, 0.9);
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sky-video-controls-overlay {
+  position: absolute;
+  inset-x: 0;
+  bottom: 0;
+  background: linear-gradient(0deg, rgba(8, 18, 28, 0.94) 0%, rgba(8, 18, 28, 0.72) 55%, transparent 100%);
+  padding: 1.5rem 1.25rem 0.9rem;
+  z-index: 10;
+}
+
+.sky-video-scrubber {
+  width: 100%;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 0.75rem;
+  position: relative;
+  transition: height 0.15s ease;
+}
+
+.sky-video-scrubber:hover {
+  height: 7px;
+}
+
+.sky-video-scrubber-filled {
+  height: 100%;
+  background: linear-gradient(90deg, #0284c7 0%, #38bdf8 100%);
+  border-radius: 4px;
+  position: relative;
+}
+
+.sky-video-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.sky-video-controls-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.sky-video-ctrl-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #f8fafc;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sky-video-ctrl-btn:hover {
+  background: rgba(2, 132, 199, 0.4);
+  border-color: #38bdf8;
+  color: #ffffff;
+}
+
+.sky-video-chapter-chips {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.35rem;
+}
+
+.sky-video-chapter-chip {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #cbd5e1;
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sky-video-chapter-chip:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.sky-video-chapter-chip.is-active {
+  background: #0284c7;
+  border-color: #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(14, 165, 233, 0.5);
+}
+
+.sky-video-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sky-video-time-text {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Feature cards under video */
+.sky-feature-grid--under-video {
+  margin-top: 1.5rem;
+}
+
+.sky-feature-card--clickable {
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--sky-border);
+  position: relative;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sky-feature-card--clickable:hover {
+  border-color: rgba(2, 132, 199, 0.4);
+  transform: translateY(-3px);
+  box-shadow: 0 10px 22px rgba(2, 132, 199, 0.08);
+}
+
+.sky-feature-card--clickable.is-highlighted {
+  border-color: #0284c7;
+  background: linear-gradient(180deg, #f0f9ff 0%, #e0f2fe 100%);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(2, 132, 199, 0.14);
+}
+
+.sky-feature-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-dark);
+}
+
+.sky-feature-jump-indicator {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #0284c7;
+  margin-left: auto;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: all 0.2s ease;
+}
+
+.sky-feature-card--clickable:hover .sky-feature-jump-indicator,
+.sky-feature-card--clickable.is-highlighted .sky-feature-jump-indicator {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (max-width: 900px) {
+  .sky-video-chapter-chips {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .sky-video-window-title {
+    font-size: 0.74rem;
+  }
+  .sky-video-window-badge {
+    display: none;
+  }
+  .sky-video-controls-overlay {
+    padding: 1rem 0.75rem 0.6rem;
+  }
+  .sky-video-time-text {
+    font-size: 0.7rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sky-video-live-dot {
+    animation: none;
+  }
+  .sky-feature-card--clickable {
+    transition: none;
+  }
+}
+
 .sky-preview-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -689,9 +1008,17 @@
   display: block;
 }
 
-.dot.red { background: #F87171; }
-.dot.amber { background: #FBBF24; }
-.dot.green { background: #4ADE80; }
+.dot.red {
+  background: #F87171;
+}
+
+.dot.amber {
+  background: #FBBF24;
+}
+
+.dot.green {
+  background: #4ADE80;
+}
 
 .sky-preview-screen {
   height: 100%;
@@ -783,11 +1110,25 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
-.chart-bar-1 { height: 34%; }
-.chart-bar-2 { height: 52%; }
-.chart-bar-3 { height: 68%; }
-.chart-bar-4 { height: 82%; }
-.chart-bar-5 { height: 100%; }
+.chart-bar-1 {
+  height: 34%;
+}
+
+.chart-bar-2 {
+  height: 52%;
+}
+
+.chart-bar-3 {
+  height: 68%;
+}
+
+.chart-bar-4 {
+  height: 82%;
+}
+
+.chart-bar-5 {
+  height: 100%;
+}
 
 .preview-alert-list {
   display: flex;
@@ -819,8 +1160,13 @@
   font-weight: 600;
 }
 
-.preview-alert--danger .alert-dot { background: #ef4444; }
-.preview-alert--warn .alert-dot { background: #f59e0b; }
+.preview-alert--danger .alert-dot {
+  background: #ef4444;
+}
+
+.preview-alert--warn .alert-dot {
+  background: #f59e0b;
+}
 
 .alert-dot {
   width: 8px;
@@ -849,7 +1195,7 @@
   font-weight: 600;
 }
 
-.table-row + .table-row {
+.table-row+.table-row {
   border-top: 1px solid rgba(30, 58, 76, 0.08);
 }
 
@@ -920,9 +1266,17 @@
   border: 1px solid rgba(59, 53, 147, 0.18);
 }
 
-.mini-line-1 { height: 32%; }
-.mini-line-2 { height: 58%; }
-.mini-line-3 { height: 82%; }
+.mini-line-1 {
+  height: 32%;
+}
+
+.mini-line-2 {
+  height: 58%;
+}
+
+.mini-line-3 {
+  height: 82%;
+}
 
 .sky-preview-meta {
   display: flex;
@@ -1060,9 +1414,21 @@
   letter-spacing: .01em;
 }
 
-.mock-status-icons { display: flex; align-items: center; gap: 3px; }
-.mock-status-icons svg { display: block; width: 13px; height: 11px; }
-.mock-status-icons svg:last-child { width: 16px; }
+.mock-status-icons {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.mock-status-icons svg {
+  display: block;
+  width: 13px;
+  height: 11px;
+}
+
+.mock-status-icons svg:last-child {
+  width: 16px;
+}
 
 .mock-login-content {
   width: 100%;
@@ -1084,18 +1450,73 @@
   box-shadow: none;
 }
 
-.mock-login-brand .sky-brand-name { font-size: 13px; }
-.mock-login-content .auth-form-header { margin-bottom: 11px; }
-.mock-login-content .auth-form-title { margin-bottom: 2px; font-size: 17px; line-height: 1.15; }
-.mock-login-content .auth-form-sub { font-size: 8px; line-height: 1.45; }
-.mock-auth-field { margin-bottom: 8px; }
-.mock-auth-field .auth-label { margin-bottom: 3px; font-size: 8px; }
-.mock-auth-input { height: 29px; padding: 6px 8px; display: flex; align-items: center; color: #98a2b3; font-size: 8px; font-weight: 400; }
-.mock-auth-password { letter-spacing: .13em; }
-.mock-forgot-link { display: block; margin-top: -2px; color: var(--sky-600); font-size: 8px; font-weight: 650; text-align: right; text-decoration: none; }
-.mock-login-submit { margin-top: 9px; padding: 8px 10px; border-radius: 7px; font-size: 10px; }
-.mock-login-content .mock-register-link { margin-top: 11px; font-size: 8px; }
-.mock-login-content .auth-switch-link a { font-size: inherit; }
+.mock-login-brand .sky-brand-name {
+  font-size: 13px;
+}
+
+.mock-login-content .auth-form-header {
+  margin-bottom: 11px;
+}
+
+.mock-login-content .auth-form-title {
+  margin-bottom: 2px;
+  font-size: 17px;
+  line-height: 1.15;
+}
+
+.mock-login-content .auth-form-sub {
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.mock-auth-field {
+  margin-bottom: 8px;
+}
+
+.mock-auth-field .auth-label {
+  margin-bottom: 3px;
+  font-size: 8px;
+}
+
+.mock-auth-input {
+  height: 29px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  color: #98a2b3;
+  font-size: 8px;
+  font-weight: 400;
+}
+
+.mock-auth-password {
+  letter-spacing: .13em;
+}
+
+.mock-forgot-link {
+  display: block;
+  margin-top: -2px;
+  color: var(--sky-600);
+  font-size: 8px;
+  font-weight: 650;
+  text-align: right;
+  text-decoration: none;
+}
+
+.mock-login-submit {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 10px;
+}
+
+.mock-login-content .mock-register-link {
+  margin-top: 11px;
+  font-size: 8px;
+}
+
+.mock-login-content .auth-switch-link a {
+  font-size: inherit;
+}
 
 .sky-mobile-copy h2 {
   margin-bottom: 0.8rem;
@@ -1492,6 +1913,7 @@
 }
 
 @media (max-width: 980px) {
+
   .sky-hero-grid,
   .sky-why-grid,
   .sky-mobile-strip,
@@ -1504,7 +1926,10 @@
     grid-template-columns: 1fr 1fr;
   }
 
-  .sky-navbar-links { display: none; }
+  .sky-navbar-links {
+    display: none;
+  }
+
   .sky-preview-grid,
   .sky-testimonial-grid,
   .sky-stories-grid,
@@ -2324,13 +2749,11 @@
 .auth-photo-tint {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    0deg,
-    rgba(30, 58, 76, 0.96) 0%,
-    rgba(30, 58, 76, 0.88) 35%,
-    rgba(30, 58, 76, 0.65) 70%,
-    rgba(2, 132, 199, 0.35) 100%
-  );
+  background: linear-gradient(0deg,
+      rgba(30, 58, 76, 0.96) 0%,
+      rgba(30, 58, 76, 0.88) 35%,
+      rgba(30, 58, 76, 0.65) 70%,
+      rgba(2, 132, 199, 0.35) 100%);
   z-index: 2;
   pointer-events: none;
 }
@@ -2604,32 +3027,41 @@
     grid-template-columns: 1fr;
     gap: 2.5rem;
   }
+
   .sky-hero-carousel-wrap {
     height: 380px;
   }
+
   .sky-process-grid {
     grid-template-columns: 1fr 1fr;
   }
+
   .sky-split-grid {
     grid-template-columns: 1fr;
     gap: 2.5rem;
   }
+
   .sky-cards-grid {
     grid-template-columns: 1fr;
   }
+
   .sky-stories-grid {
     grid-template-columns: 1fr;
   }
+
   .sky-footer-top {
     grid-template-columns: 1fr 1fr;
     gap: 2rem;
   }
+
   .auth-split-wrapper {
     grid-template-columns: 1fr;
   }
+
   .auth-photo-side {
     display: none;
   }
+
   .auth-mobile-brand {
     display: inline-flex;
   }
@@ -2639,15 +3071,19 @@
   .sky-hero-headline {
     font-size: 2.1rem;
   }
+
   .sky-nav-links {
     display: none;
   }
+
   .sky-process-grid {
     grid-template-columns: 1fr;
   }
+
   .sky-split-cols {
     grid-template-columns: 1fr;
   }
+
   .sky-footer-top {
     grid-template-columns: 1fr;
   }
