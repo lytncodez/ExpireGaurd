@@ -24,7 +24,6 @@ export default function CoreFeaturesVideoSection({
   featureIcons,
 }: CoreFeaturesVideoSectionProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(12);
@@ -35,6 +34,17 @@ export default function CoreFeaturesVideoSection({
   });
   const [activeChapter, setActiveChapter] = useState(0);
 
+  // Guarantee seamless automatic playback on mount
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.defaultMuted = true;
+      videoRef.current.muted = true;
+      if (!prefersReducedMotion) {
+        videoRef.current.play().catch(() => {});
+      }
+    }
+  }, [prefersReducedMotion]);
+
   // Check reduced motion preference changes
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -42,14 +52,12 @@ export default function CoreFeaturesVideoSection({
 
     if (mediaQuery.matches && videoRef.current) {
       videoRef.current.pause();
-      setIsPlaying(false);
     }
 
     const handler = (e: MediaQueryListEvent) => {
       setPrefersReducedMotion(e.matches);
       if (e.matches && videoRef.current) {
         videoRef.current.pause();
-        setIsPlaying(false);
       }
     };
     mediaQuery.addEventListener('change', handler);
@@ -73,20 +81,6 @@ export default function CoreFeaturesVideoSection({
     }
   }, []);
 
-  const togglePlay = useCallback(() => {
-    if (!videoRef.current) return;
-    if (isPlaying) {
-      videoRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      videoRef.current.play().then(() => {
-        setIsPlaying(true);
-      }).catch(() => {
-        setIsPlaying(false);
-      });
-    }
-  }, [isPlaying]);
-
   const toggleMute = useCallback(() => {
     if (!videoRef.current) return;
     videoRef.current.muted = !isMuted;
@@ -96,10 +90,8 @@ export default function CoreFeaturesVideoSection({
   const seekTo = useCallback((seconds: number) => {
     if (!videoRef.current) return;
     videoRef.current.currentTime = seconds;
-    if (!isPlaying) {
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
-    }
-  }, [isPlaying]);
+    videoRef.current.play().catch(() => {});
+  }, []);
 
   const toggleFullscreen = useCallback(() => {
     if (!videoRef.current) return;
@@ -170,7 +162,7 @@ export default function CoreFeaturesVideoSection({
               ref={videoRef}
               src="/expiryguard-demo.webm"
               poster="/expiryguard-demo-poster.jpg"
-              autoPlay={!prefersReducedMotion}
+              autoPlay
               loop
               muted={isMuted}
               playsInline
@@ -178,6 +170,11 @@ export default function CoreFeaturesVideoSection({
               className="sky-video-element"
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleLoadedMetadata}
+              onCanPlay={() => {
+                if (videoRef.current && videoRef.current.paused && !prefersReducedMotion) {
+                  videoRef.current.play().catch(() => {});
+                }
+              }}
               onError={() => setHasError(true)}
               aria-label="ExpiryGuard platform workflow demonstration video showing intake scanning, risk scoring, FEFO dispensing, and real-time alerts"
             >
@@ -232,25 +229,6 @@ export default function CoreFeaturesVideoSection({
             {/* Controls Row */}
             <div className="sky-video-controls-row">
               <div className="sky-video-controls-left">
-                <button
-                  type="button"
-                  className="sky-video-ctrl-btn"
-                  onClick={togglePlay}
-                  aria-label={isPlaying ? 'Pause video demo' : 'Play video demo'}
-                  title={isPlaying ? 'Pause' : 'Play'}
-                >
-                  {isPlaying ? (
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                      <rect x="6" y="4" width="4" height="16" rx="1" />
-                      <rect x="14" y="4" width="4" height="16" rx="1" />
-                    </svg>
-                  ) : (
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                      <polygon points="5 3 19 12 5 21 5 3" />
-                    </svg>
-                  )}
-                </button>
-
                 <button
                   type="button"
                   className="sky-video-ctrl-btn"
