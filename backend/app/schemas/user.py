@@ -1,56 +1,46 @@
-"""User schemas for API validation"""
+from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field
+
+from app.models.user import UserRole
+from app.schemas import ORMModel
+from app.schemas.types import OptionalPhone, Password
+
+
+class UserRead(ORMModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    name: str
+    email: EmailStr
+    phone_number: str | None
+    role: UserRole = Field(description="admin | dispenser")
+    is_active: bool
+    last_login_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class UserCreate(BaseModel):
-    """For registration"""
+    name: str = Field(min_length=2, max_length=200)
     email: EmailStr
-    password: str = Field(min_length=8)
-    name: str | None = None
-    full_name: str | None = None
-    phone: str | None = None
-
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, value: str) -> str:
-        if len(value) < 8:
-            raise ValueError("Password must be at least 8 characters long")
-        return value
-
-    @model_validator(mode="before")
-    @classmethod
-    def populate_full_name(cls, values):
-        if isinstance(values, dict):
-            if values.get("full_name") is None and values.get("name") is not None:
-                values["full_name"] = values["name"]
-        return values
+    password: Password | None = Field(
+        default=None, description="Omit to generate a temporary password (returned once in the response)"
+    )
+    phone_number: OptionalPhone = None
+    role: UserRole = UserRole.DISPENSER
 
 
-class UserLogin(BaseModel):
-    """For login"""
-    email: EmailStr
-    password: str
+class UserCreated(UserRead):
+    temporary_password: str | None = Field(
+        default=None, description="Only present when the admin did not set a password; share it with the user"
+    )
 
 
-class UserResponse(BaseModel):
-    """Response when returning user data"""
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
-    id: int
-    email: str
-    full_name: str | None
-    name: str | None = None
-    phone: str | None = None
-    is_active: bool
-    created_at: datetime
-
-    @model_validator(mode="before")
-    @classmethod
-    def populate_name(cls, values):
-        if isinstance(values, dict):
-            values.setdefault("name", values.get("full_name"))
-        return values
+class UserUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    phone_number: OptionalPhone = None
+    role: UserRole | None = None
+    is_active: bool | None = None

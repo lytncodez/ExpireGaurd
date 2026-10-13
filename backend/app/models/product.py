@@ -1,35 +1,42 @@
-"""Product ORM model"""
+"""Products. A barcode identifies a product, never a batch or expiry date."""
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
-from datetime import datetime
+from __future__ import annotations
 
-from app.core.database import Base
+import uuid
+from decimal import Decimal
+
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, Uuid
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.database import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
-class Product(Base):
+class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "products"
+    __table_args__ = (
+        UniqueConstraint("company_id", "sku", name="uq_products_company_sku"),
+        UniqueConstraint("company_id", "barcode", name="uq_products_company_barcode"),
+        CheckConstraint("selling_price >= 0", name="selling_price_non_negative"),
+        CheckConstraint("cost_price >= 0", name="cost_price_non_negative"),
+        Index("ix_products_sku", "sku"),
+        Index("ix_products_barcode", "barcode"),
+        Index("ix_products_company_name", "company_id", "name"),
+    )
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    name = Column(String, index=True, nullable=False)
-    sku = Column(String, unique=True, index=True, nullable=False)
-    barcode = Column(String, nullable=True)
-    category = Column(String, nullable=True)
-    brand = Column(String, nullable=True)
-    unit = Column(String, nullable=True, default="pieces")
-    selling_price = Column(Float, default=0.0)
-    cost_price = Column(Float, default=0.0)
-    unit_price = Column(Float, default=0.0)
-    description = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    @property
-    def price(self):
-        return self.selling_price or self.unit_price or 0.0
-
-    # Relationships
-    user = relationship("User", back_populates="products")
-    batches = relationship("Batch", back_populates="product", cascade="all, delete-orphan")
-    sales = relationship("Sale", back_populates="product", cascade="all, delete-orphan")
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    category_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("categories.id", ondelete="SET NULL"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    sku: Mapped[str | None] = mapped_column(String(64))
+    barcode: Mapped[str | None] = mapped_column(String(64))
+    brand: Mapped[str | None] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(Text)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False, default="unit", server_default="unit")
+    selling_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    cost_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    # Product photo as a data URL (the frontend downsizes images before upload; size-checked in the API).
+    photo: Mapped[str | None] = mapped_column(Text)

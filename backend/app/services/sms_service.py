@@ -1,248 +1,155 @@
-"""SMS Service - Abstracted SMS provider for sending alerts"""
+"""SMS provider abstraction.
 
+    SMS_MODE=mock  -> MockSMSProvider (logs + in-memory outbox, full local demo)
+    SMS_MODE=live  -> Africa's Talking or Twilio over HTTPS (credentials from env only)
+
+`send_sms` never raises: failures come back as SMSResult(success=False, error=...).
+"""
+
+from __future__ import annotations
+
+import uuid
 from abc import ABC, abstractmethod
-from enum import Enum
-from app.core.config import settings
-import logging
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime
+from functools import lru_cache
 
-logger = logging.getLogger(__name__)
+import httpx
+
+from app.core.config import secret_value, settings
+from app.core.logging import get_logger
+from app.utils.dates import utcnow
+
+logger = get_logger(__name__)
 
 
-class SMSProvider(str, Enum):
-    """Supported SMS providers"""
-    MOCK = "MOCK"
-    TWILIO = "TWILIO"
-    AFRICASTALKING = "AFRICASTALKING"
+@dataclass(frozen=True)
+class SMSResult:
+    success: bool
+    provider: str
+    message_id: str | None = None
+    error: str | None = None
 
 
-class BaseSMSProvider(ABC):
-    """Abstract base class for SMS providers"""
-    
+@dataclass(frozen=True)
+class MockMessage:
+    to: str
+    body: str
+    message_id: str
+    sent_at: datetime
+
+
+class SMSProvider(ABC):
+    name: str = "base"
+
     @abstractmethod
-    def send_sms(self, phone_number: str, message: str) -> dict:
-        """
-        Send SMS message
-        
-        Args:
-            phone_number: Recipient phone number
-            message: SMS message text
-            
-        Returns:
-            {
-                "success": bool,
-                "message_id": str or None,
-                "error": str or None
-            }
-        """
-        pass
+    async def send(self, to: str, message: str) -> SMSResult:  # pragma: no cover - interface
+        raise NotImplementedError
 
 
-class MockSMSProvider(BaseSMSProvider):
-    """Mock SMS provider for development/testing"""
-    
-    def send_sms(self, phone_number: str, message: str) -> dict:
-        """
-        Simulate SMS sending without actually sending
-        Useful for development and testing
-        """
-        logger.info(f"[MOCK SMS] To: {phone_number}")
-        logger.info(f"[MOCK SMS] Message: {message}")
-        
-        return {
-            "success": True,
-            "message_id": f"Test SMS mock-{phone_number}-{id(message)}",
-            "error": None
-        }
+class MockSMSProvider(SMSProvider):
+    name = "mock"
+    outbox: deque[MockMessage] = deque(maxlen=1000)
+
+    async def send(self, to: str, message: str) -> SMSResult:
+        message_id = f"mock-{uuid.uuid4().hex[:16]}"
+        self.outbox.append(MockMessage(to=to, body=message, message_id=message_id, sent_at=utcnow()))
+        logger.info("[MOCK SMS] to=%s id=%s body=%s", to, message_id, message)
+        return SMSResult(success=True, provider=self.name, message_id=message_id)
 
 
-class TwilioSMSProvider(BaseSMSProvider):
-    """Twilio SMS provider for production"""
-    
-    def __init__(self):
-        """Initialize Twilio client"""
+class AfricasTalkingSMSProvider(SMSProvider):
+    name = "africastalking"
+
+    def __init__(self, username: str, api_key: str, sandbox: bool, sender_id: str | None, timeout: float) -> None:
+        self.username = username
+        self._api_key = api_key
+        self.sender_id = sender_id
+        self.timeout = timeout
+        host = "api.sandbox.africastalking.com" if sandbox else "api.africastalking.com"
+        self.url = f"https://{host}/version1/messaging"
+
+    async def send(self, to: str, message: str) -> SMSResult:
+        data = {"username": self.username, "to": to, "message": message}
+        if self.sender_id:
+            data["from"] = self.sender_id
+        headers = {"apiKey": self._api_key, "Accept": "application/json"}
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(self.url, data=data, headers=headers)
+        if resp.status_code >= 400:
+            return SMSResult(False, self.name, error=f"HTTP {resp.status_code}: {resp.text[:300]}")
         try:
-            from twilio.rest import Client
-            
-            account_sid = settings.twilio_account_sid
-            auth_token = settings.twilio_auth_token
-            self.twilio_phone = settings.twilio_phone_number
-            
-            if not all([account_sid, auth_token, self.twilio_phone]):
-                raise ValueError("Missing Twilio credentials in .env")
-            
-            self.client = Client(account_sid, auth_token)
-            logger.info("Twilio SMS provider initialized")
-        except ImportError:
-            logger.error("Twilio not installed. Run: pip install twilio")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to initialize Twilio: {e}")
-            raise
-    
-    def send_sms(self, phone_number: str, message: str) -> dict:
-        """Send SMS via Twilio"""
-        try:
-            sms = self.client.messages.create(
-                body=message,
-                from_=self.twilio_phone,
-                to=phone_number
+            recipients = resp.json()["SMSMessageData"]["Recipients"]
+        except (ValueError, KeyError, TypeError):
+            return SMSResult(False, self.name, error=f"Unexpected response: {resp.text[:300]}")
+        if not recipients:
+            return SMSResult(False, self.name, error="Provider accepted no recipients")
+        first = recipients[0]
+        if str(first.get("status", "")).lower() != "success":
+            return SMSResult(False, self.name, error=f"Delivery rejected: {first.get('status')}")
+        return SMSResult(True, self.name, message_id=first.get("messageId"))
+
+
+class TwilioSMSProvider(SMSProvider):
+    name = "twilio"
+
+    def __init__(self, account_sid: str, auth_token: str, from_number: str, timeout: float) -> None:
+        self.account_sid = account_sid
+        self._auth_token = auth_token
+        self.from_number = from_number
+        self.timeout = timeout
+        self.url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
+
+    async def send(self, to: str, message: str) -> SMSResult:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                self.url,
+                data={"To": to, "From": self.from_number, "Body": message},
+                auth=(self.account_sid, self._auth_token),
             )
-            
-            logger.info(f"SMS sent via Twilio: {sms.sid}")
-            
-            return {
-                "success": True,
-                "message_id": sms.sid,
-                "error": None
-            }
-        except Exception as e:
-            logger.error(f"Twilio SMS failed: {str(e)}")
-            
-            return {
-                "success": False,
-                "message_id": None,
-                "error": str(e)
-            }
-
-
-class AfricasTalkingSMSProvider(BaseSMSProvider):
-    """Africa's Talking SMS provider (popular in Africa)"""
-    
-    def __init__(self):
-        """Initialize Africa's Talking client"""
+        if resp.status_code >= 400:
+            try:
+                detail = resp.json().get("message", resp.text[:300])
+            except ValueError:
+                detail = resp.text[:300]
+            return SMSResult(False, self.name, error=f"HTTP {resp.status_code}: {detail}")
         try:
-            import africastalking
-            
-            api_key = settings.africastalking_api_key
-            username = settings.africastalking_username
-            
-            if not all([api_key, username]):
-                raise ValueError("Missing Africa's Talking credentials in .env")
-            
-            africastalking.initialize(username, api_key)
-            self.sms = africastalking.SMS
-            
-            logger.info("Africa's Talking SMS provider initialized")
-        except ImportError:
-            logger.error("Africa's Talking not installed. Run: pip install africastalking")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to initialize Africa's Talking: {e}")
-            raise
-    
-    def send_sms(self, phone_number: str, message: str) -> dict:
-        """Send SMS via Africa's Talking"""
-        try:
-            response = self.sms.send(message, [phone_number])
-            
-            logger.info(f"SMS sent via Africa's Talking: {response}")
-            
-            return {
-                "success": True,
-                "message_id": response.get("id"),
-                "error": None
-            }
-        except Exception as e:
-            logger.error(f"Africa's Talking SMS failed: {str(e)}")
-            
-            return {
-                "success": False,
-                "message_id": None,
-                "error": str(e)
-            }
+            sid = resp.json().get("sid")
+        except ValueError:
+            sid = None
+        return SMSResult(True, self.name, message_id=sid)
 
 
-class SMSService:
-    """SMS Service - abstracted from provider"""
-    
-    def __init__(self):
-        """Initialize SMS service with configured provider"""
-        self.provider_name = getattr(settings, "sms_provider", "MOCK").upper()
-        self.provider = self._initialize_provider()
-        logger.info(f"SMS Service initialized with provider: {self.provider_name}")
-    
-    def _initialize_provider(self) -> BaseSMSProvider:
-        """Initialize the configured SMS provider"""
-        if self.provider_name == "MOCK":
-            return MockSMSProvider()
-        elif self.provider_name == "TWILIO":
-            return TwilioSMSProvider()
-        elif self.provider_name == "AFRICASTALKING":
-            return AfricasTalkingSMSProvider()
-        else:
-            logger.warning(f"Unknown SMS provider: {self.provider_name}, using MOCK")
-            return MockSMSProvider()
-    
-    def send_alert_sms(self, phone_number: str, product_name: str, 
-                       status: str, days_remaining: int) -> dict:
-        """
-        Send alert SMS for batch expiry
-        
-        Args:
-            phone_number: Recipient phone number
-            product_name: Name of product
-            status: Expiry status (EXPIRED, CRITICAL, EXPIRING_SOON)
-            days_remaining: Days until expiry
-            
-        Returns:
-            {"success": bool, "message_id": str or None, "error": str or None}
-        """
-        
-        # Build message
-        if status == "EXPIRED":
-            message = f"🚨 EXPIRED: {product_name} has expired and should not be used."
-        elif status == "CRITICAL":
-            message = f"🔴 CRITICAL: {product_name} expires in {days_remaining} days. Urgent action required."
-        else:  # EXPIRING_SOON
-            message = f"⚠️ EXPIRING SOON: {product_name} expires in {days_remaining} days. Plan accordingly."
-        
-        # Add branding
-        message += " - ExpireGuard"
-        
-        # Send via provider
-        try:
-            result = self.provider.send_sms(phone_number, message)
-            return result
-        except Exception as e:
-            logger.error(f"SMS service error: {str(e)}")
-            return {
-                "success": False,
-                "message_id": None,
-                "error": str(e)
-            }
-    
-    def send_test_sms(self, phone_number: str, test_message: str = None) -> dict:
-        """
-        Send test SMS to verify SMS service is working
-        
-        Args:
-            phone_number: Recipient phone number
-            test_message: Optional custom message (default: generic test message)
-            
-        Returns:
-            {"success": bool, "message_id": str or None, "error": str or None}
-        """
-        if not test_message:
-            test_message = f"✅ Test SMS from ExpireGuard. If you see this, SMS is working! Provider: {self.provider_name}"
-        
-        try:
-            result = self.provider.send_sms(phone_number, test_message)
-            return result
-        except Exception as e:
-            logger.error(f"Test SMS failed: {str(e)}")
-            return {
-                "success": False,
-                "message_id": None,
-                "error": str(e)
-            }
+@lru_cache
+def get_sms_provider() -> SMSProvider:
+    if settings.SMS_MODE == "mock":
+        return MockSMSProvider()
+    if settings.SMS_PROVIDER == "twilio":
+        return TwilioSMSProvider(
+            settings.TWILIO_ACCOUNT_SID or "",
+            secret_value(settings.TWILIO_AUTH_TOKEN) or "",
+            settings.TWILIO_FROM_NUMBER or "",
+            settings.SMS_TIMEOUT_SECONDS,
+        )
+    return AfricasTalkingSMSProvider(
+        settings.AT_USERNAME or "",
+        secret_value(settings.AT_API_KEY) or "",
+        settings.AT_SANDBOX,
+        settings.SMS_SENDER_ID,
+        settings.SMS_TIMEOUT_SECONDS,
+    )
 
 
-# Singleton instance
-_sms_service = None
-
-def get_sms_service() -> SMSService:
-    """Get or create SMS service singleton"""
-    global _sms_service
-    if _sms_service is None:
-        _sms_service = SMSService()
-    return _sms_service
+async def send_sms(to: str, message: str, provider: SMSProvider | None = None) -> SMSResult:
+    provider = provider or get_sms_provider()
+    try:
+        result = await provider.send(to, message)
+    except httpx.TimeoutException:
+        result = SMSResult(False, provider.name, error="Provider timed out")
+    except Exception as exc:  # noqa: BLE001 - provider errors must never propagate
+        logger.exception("SMS provider %s raised", provider.name)
+        result = SMSResult(False, provider.name, error=f"{type(exc).__name__}: {str(exc)[:300]}")
+    if not result.success:
+        logger.warning("SMS to %s via %s failed: %s", to, provider.name, result.error)
+    return result

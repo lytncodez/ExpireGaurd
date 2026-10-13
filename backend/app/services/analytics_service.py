@@ -1,406 +1,397 @@
-"""Analytics Service - Calculate verified metrics from database"""
+"""Deterministic analytics computed with SQL + Python. No LLM is used for any figure."""
 
-from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from __future__ import annotations
+
+import statistics
+import uuid
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date, timedelta
 from decimal import Decimal
-import logging
 
-from app.models.product import Product
-from app.models.batch import Batch, ExpiryStatus
-from app.models.sale import Sale
-from app.models.alert import Alert
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+from app.core.config import settings
+from app.core.exceptions import BadRequestError
+from app.models import Alert, Batch, Category, Company, Product
+from app.schemas.analytics import (
+    ExpiryRiskItem,
+    InventoryAnalytics,
+    InventoryMetrics,
+    NamedAmount,
+    OverviewResponse,
+    ProductAnalytics,
+    ProductPerformance,
+    SalesAnalytics,
+    SalesMetrics,
+    SeriesPoint,
+    TrendsAnalytics,
+)
+from app.services.auth_service import get_company
+from app.services.expiry_service import ExpiryThresholds, batch_status, thresholds_for
+from app.services.sales_service import bucket_series, bucket_start, sales_rows
+from app.utils.dates import add_months, days_until, local_date, month_start, start_of_local_day_utc, today_in_tz, week_start
+from app.utils.helpers import pct_change, to_float
 
-
-class InventoryMetrics:
-    """Inventory-related metrics"""
-    
-    total_products: int
-    total_stock_units: int
-    total_stock_value: Decimal
-    expired_products: int
-    critical_products: int
-    expiring_soon_products: int
-    safe_products: int
-    
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-
-class SalesMetrics:
-    """Sales-related metrics"""
-    
-    total_sales: int
-    total_revenue: Decimal
-    total_cost: Decimal
-    gross_profit: Decimal
-    gross_margin: float
-    units_sold: int
-    avg_sale_value: Decimal
-    
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+FAST_SHARE = 0.2
+HIGH_COVER_DAYS = 90
+LOW_COVER_DAYS = 7
 
 
-class ProductPerformance:
-    """Individual product performance"""
-    
-    product_id: int
+@dataclass
+class BatchRow:
+    batch_id: uuid.UUID
+    product_id: uuid.UUID
     product_name: str
-    sku: str
-    total_stock: int
-    weekly_sales: float
-    monthly_sales: float
-    sales_trend: str  # "increasing", "declining", "stable"
-    revenue: Decimal
+    batch_number: str
+    expiry_date: date
+    remaining: int
     cost: Decimal
-    margin: float
-    batches_count: int
-    expired_batches: int
-    critical_batches: int
-    
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+    price: Decimal
 
 
-def get_inventory_metrics(db: Session) -> InventoryMetrics:
-    """Calculate current inventory metrics"""
-    
-    # Total products (active)
-    total_products = db.query(Product).filter(Product.is_active == True).count()
-    
-    # Total stock and value
-    batches = db.query(Batch).all()
-    total_stock_units = sum(b.quantity_remaining or 0 for b in batches)
-    total_stock_value = sum(
-        (b.quantity_remaining or 0) * (b.product.cost_price or 0)
-        for b in batches
-        if b.product
+async def _context(db: AsyncSession, company_id: uuid.UUID) -> tuple[Company, date]:
+    company = await get_company(db, company_id)
+    return company, today_in_tz(company.timezone)
+
+
+async def load_batches(db: AsyncSession, company_id: uuid.UUID) -> list[BatchRow]:
+    rows = (
+        await db.execute(
+            select(
+                Batch.id, Batch.product_id, Product.name, Batch.batch_number, Batch.expiry_date,
+                Batch.remaining_quantity, Product.cost_price, Product.selling_price,
+            )
+            .join(Product, Product.id == Batch.product_id)
+            .where(Batch.company_id == company_id, Batch.remaining_quantity > 0, Product.is_active.is_(True))
+            .order_by(Batch.expiry_date)
+        )
+    ).all()
+    return [BatchRow(*r) for r in rows]
+
+
+async def load_sales(db: AsyncSession, company: Company, start: date, end: date):
+    """Sales between local dates [start, end] inclusive."""
+    return await sales_rows(
+        db, company.id,
+        start_of_local_day_utc(start, company.timezone),
+        start_of_local_day_utc(end + timedelta(days=1), company.timezone),
     )
-    
-    # Count by status
-    expired_count = sum(1 for b in batches if b.status == ExpiryStatus.EXPIRED)
-    critical_count = sum(1 for b in batches if b.status == ExpiryStatus.CRITICAL)
-    expiring_soon_count = sum(1 for b in batches if b.status == ExpiryStatus.EXPIRING_SOON)
-    safe_count = sum(1 for b in batches if b.status == ExpiryStatus.SAFE)
-    
-    # Get unique products affected
-    expired_products = len(set(b.product_id for b in batches if b.status == ExpiryStatus.EXPIRED))
-    critical_products = len(set(b.product_id for b in batches if b.status == ExpiryStatus.CRITICAL))
-    expiring_soon_products = len(set(b.product_id for b in batches if b.status == ExpiryStatus.EXPIRING_SOON))
-    safe_products = len(set(b.product_id for b in batches if b.status == ExpiryStatus.SAFE))
-    
+
+
+async def count_active_products(db: AsyncSession, company_id: uuid.UUID) -> int:
+    return int(
+        await db.scalar(
+            select(func.count()).select_from(Product).where(Product.company_id == company_id, Product.is_active.is_(True))
+        )
+        or 0
+    )
+
+
+def inventory_metrics(
+    batches: list[BatchRow], today: date, total_products: int, t: ExpiryThresholds
+) -> InventoryMetrics:
+    units = defaultdict(int)
+    values = defaultdict(lambda: Decimal("0"))
+    cost_total = retail_total = Decimal("0")
+    for b in batches:
+        status = batch_status(b.expiry_date, b.remaining, today, t).value
+        units[status] += b.remaining
+        values[status] += b.cost * b.remaining
+        cost_total += b.cost * b.remaining
+        retail_total += b.price * b.remaining
     return InventoryMetrics(
         total_products=total_products,
-        total_stock_units=total_stock_units,
-        total_stock_value=Decimal(str(total_stock_value)),
-        expired_products=expired_products,
-        critical_products=critical_products,
-        expiring_soon_products=expiring_soon_products,
-        safe_products=safe_products
+        total_units=sum(b.remaining for b in batches),
+        inventory_value=to_float(cost_total),
+        retail_value=to_float(retail_total),
+        expired_units=units["EXPIRED"],
+        critical_units=units["CRITICAL"],
+        action_required_units=units["ACTION_REQUIRED"],
+        monitor_units=units["MONITOR"],
+        safe_units=units["SAFE"],
+        expired_value=to_float(values["EXPIRED"]),
+        critical_value=to_float(values["CRITICAL"]),
     )
 
 
-def get_sales_metrics(db: Session, days_back: int = 30) -> SalesMetrics:
-    """Calculate sales metrics"""
-    
-    cutoff_date = datetime.utcnow() - timedelta(days=days_back)
-    
-    sales = db.query(Sale).filter(Sale.sold_at >= cutoff_date).all()
-    
-    total_sales = len(sales)
-    total_revenue = sum(s.total_amount or 0 for s in sales)
-    units_sold = sum(s.quantity or 0 for s in sales)
-    
-    # Calculate cost
-    total_cost = sum(
-        (s.quantity or 0) * (s.product.cost_price or 0)
-        for s in sales
-        if s.product
-    )
-    
-    gross_profit = total_revenue - total_cost
-    gross_margin = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
-    avg_sale_value = (total_revenue / total_sales) if total_sales > 0 else Decimal(0)
-    
-    return SalesMetrics(
-        total_sales=total_sales,
-        total_revenue=Decimal(str(total_revenue)),
-        total_cost=Decimal(str(total_cost)),
-        gross_profit=Decimal(str(gross_profit)),
-        gross_margin=float(gross_margin),
-        units_sold=units_sold,
-        avg_sale_value=Decimal(str(avg_sale_value))
-    )
+def units_by_product(sales) -> dict[uuid.UUID, int]:
+    out: dict[uuid.UUID, int] = defaultdict(int)
+    for pid, _, _, qty, _, _, _ in sales:
+        out[pid] += qty
+    return out
 
 
-def get_product_performance(db: Session, product_id: int, days_back: int = 30) -> ProductPerformance:
-    """Get performance metrics for a specific product"""
-    
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
-        return None
-    
-    # Current stock
-    batches = db.query(Batch).filter(Batch.product_id == product_id).all()
-    total_stock = sum(b.quantity_remaining or 0 for b in batches)
-    
-    # Sales metrics
-    cutoff_date = datetime.utcnow() - timedelta(days=days_back)
-    sales = db.query(Sale).filter(
-        Sale.product_id == product_id,
-        Sale.sold_at >= cutoff_date
-    ).all()
-    
-    weekly_sales = len(sales) / (days_back / 7)
-    monthly_sales = len(sales) / (days_back / 30)
-    
-    # Revenue and cost
-    revenue = sum(s.total_amount or 0 for s in sales)
-    cost = sum((s.quantity or 0) * (product.cost_price or 0) for s in sales)
-    margin = (revenue - cost) / revenue * 100 if revenue > 0 else 0
-    
-    # Batch status
-    expired_batches = sum(1 for b in batches if b.status == ExpiryStatus.EXPIRED)
-    critical_batches = sum(1 for b in batches if b.status == ExpiryStatus.CRITICAL)
-    
-    # Determine trend
-    if days_back >= 14:
-        # Compare first half vs second half
-        mid_date = cutoff_date + timedelta(days=days_back/2)
-        first_half = db.query(Sale).filter(
-            Sale.product_id == product_id,
-            Sale.sold_at >= cutoff_date,
-            Sale.sold_at < mid_date
-        ).count()
-        second_half = db.query(Sale).filter(
-            Sale.product_id == product_id,
-            Sale.sold_at >= mid_date,
-            Sale.sold_at <= datetime.utcnow()
-        ).count()
-        
-        if second_half > first_half * 1.1:
-            trend = "increasing"
-        elif second_half < first_half * 0.9:
-            trend = "declining"
+def expiry_risk(batches: list[BatchRow], velocity: dict[uuid.UUID, float], today: date) -> list[ExpiryRiskItem]:
+    """Project FEFO sell-through at current velocity; what cannot sell before expiry is at risk.
+
+    Batches of the same product are consumed in expiry order, so later batches only get the
+    demand left over after earlier ones.
+    """
+    consumed: dict[uuid.UUID, float] = defaultdict(float)
+    items: list[ExpiryRiskItem] = []
+    for b in sorted(batches, key=lambda x: (x.product_id, x.expiry_date)):
+        days = days_until(b.expiry_date, today)
+        if days <= 0:
+            projected = 0.0
         else:
-            trend = "stable"
-    else:
-        trend = "unknown"
-    
-    return ProductPerformance(
-        product_id=product_id,
-        product_name=product.name,
-        sku=product.sku,
-        total_stock=total_stock,
-        weekly_sales=weekly_sales,
-        monthly_sales=monthly_sales,
-        sales_trend=trend,
-        revenue=Decimal(str(revenue)),
-        cost=Decimal(str(cost)),
-        margin=float(margin),
-        batches_count=len(batches),
-        expired_batches=expired_batches,
-        critical_batches=critical_batches
+            demand_until_expiry = velocity.get(b.product_id, 0.0) * days
+            available_demand = max(0.0, demand_until_expiry - consumed[b.product_id])
+            projected = min(float(b.remaining), available_demand)
+            consumed[b.product_id] += projected
+        at_risk = max(0, b.remaining - int(projected))
+        if at_risk > 0:
+            items.append(
+                ExpiryRiskItem(
+                    batch_id=b.batch_id, product_id=b.product_id, product_name=b.product_name,
+                    batch_number=b.batch_number, expiry_date=b.expiry_date, days_remaining=days,
+                    remaining_quantity=b.remaining, projected_sales_before_expiry=round(projected, 1),
+                    units_at_risk=at_risk, value_at_risk=to_float(b.cost * at_risk),
+                )
+            )
+    items.sort(key=lambda i: (i.days_remaining, -i.value_at_risk))
+    return items
+
+
+# --------------------------------------------------------------------------- overview
+
+
+async def overview(db: AsyncSession, company_id: uuid.UUID, days: int | None = None) -> OverviewResponse:
+    company, today = await _context(db, company_id)
+    days = days or settings.ANALYTICS_DEFAULT_DAYS
+    batches = await load_batches(db, company_id)
+    metrics = inventory_metrics(batches, today, await count_active_products(db, company_id), thresholds_for(company))
+    current = await load_sales(db, company, today - timedelta(days=days - 1), today)
+    previous = await load_sales(db, company, today - timedelta(days=2 * days - 1), today - timedelta(days=days))
+    rev = float(sum((r[4] for r in current), Decimal("0")))
+    prev_rev = float(sum((r[4] for r in previous), Decimal("0")))
+    units = sum(r[3] for r in current)
+    prev_units = sum(r[3] for r in previous)
+    velocity = {pid: u / days for pid, u in units_by_product(current).items()}
+    risk = expiry_risk(batches, velocity, today)
+    open_alerts = await db.scalar(
+        select(func.count()).select_from(Alert).where(Alert.company_id == company_id, Alert.is_resolved.is_(False))
+    )
+    return OverviewResponse(
+        as_of=today,
+        currency=company.currency,
+        inventory=metrics,
+        sales=SalesMetrics(
+            period_days=days, revenue=round(rev, 2), units_sold=units, transactions=len(current),
+            previous_revenue=round(prev_rev, 2), revenue_growth_pct=pct_change(rev, prev_rev),
+            units_growth_pct=pct_change(units, prev_units),
+        ),
+        potential_waste_value=round(sum(i.value_at_risk for i in risk), 2),
+        open_alerts=int(open_alerts or 0),
     )
 
 
-def get_all_products_performance(db: Session, days_back: int = 30) -> list[ProductPerformance]:
-    """Get performance metrics for all products"""
-    
-    products = db.query(Product).filter(Product.is_active == True).all()
-    
-    performances = []
-    for product in products:
-        perf = get_product_performance(db, product.id, days_back)
-        if perf:
-            performances.append(perf)
-    
-    return performances
+# --------------------------------------------------------------------------- sales
 
 
-def get_sales_trends(db: Session, period: str = "daily") -> dict:
-    """
-    Calculate sales trends
-    
-    period: "daily" | "weekly" | "monthly"
-    """
-    
-    if period == "daily":
-        days = 30
-        group_by = "date"
-    elif period == "weekly":
-        days = 90
-        group_by = "week"
-    elif period == "monthly":
-        days = 365
-        group_by = "month"
-    else:
-        return {}
-    
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
-    sales = db.query(Sale).filter(Sale.sold_at >= cutoff_date).all()
-    
-    # Group by period
-    trends = {}
-    for sale in sales:
-        if group_by == "date":
-            key = sale.sold_at.date()
-        elif group_by == "week":
-            key = sale.sold_at.isocalendar()[1]  # Week number
-        elif group_by == "month":
-            key = sale.sold_at.strftime("%Y-%m")
-        
-        if key not in trends:
-            trends[key] = {
-                "revenue": 0,
-                "units": 0,
-                "count": 0
-            }
-        
-        trends[key]["revenue"] += sale.total_amount or 0
-        trends[key]["units"] += sale.quantity or 0
-        trends[key]["count"] += 1
-    
-    return trends
-
-
-def detect_anomalies(db: Session) -> list[dict]:
-    """Detect unusual patterns in inventory and sales"""
-    
-    anomalies = []
-    
-    # Check 1: High stock + Low sales
-    products = get_all_products_performance(db, days_back=30)
-    for product in products:
-        if product.total_stock > 500 and product.weekly_sales < 10:
-            anomalies.append({
-                "type": "HIGH_STOCK_LOW_SALES",
-                "product_id": product.product_id,
-                "product_name": product.product_name,
-                "stock": product.total_stock,
-                "weekly_sales": product.weekly_sales,
-                "severity": "MEDIUM"
-            })
-    
-    # Check 2: Low stock + High sales
-    for product in products:
-        if product.total_stock < 50 and product.weekly_sales > 30:
-            anomalies.append({
-                "type": "LOW_STOCK_HIGH_SALES",
-                "product_id": product.product_id,
-                "product_name": product.product_name,
-                "stock": product.total_stock,
-                "weekly_sales": product.weekly_sales,
-                "severity": "HIGH"
-            })
-    
-    # Check 3: Repeated expiry
-    batches = db.query(Batch).all()
-    product_expiry_count = {}
-    for batch in batches:
-        if batch.status == ExpiryStatus.EXPIRED:
-            if batch.product_id not in product_expiry_count:
-                product_expiry_count[batch.product_id] = 0
-            product_expiry_count[batch.product_id] += 1
-    
-    for product_id, count in product_expiry_count.items():
-        if count >= 3:  # 3 or more expired batches
-            product = db.query(Product).filter(Product.id == product_id).first()
-            anomalies.append({
-                "type": "REPEATED_EXPIRY",
-                "product_id": product_id,
-                "product_name": product.name if product else "Unknown",
-                "expired_batches": count,
-                "severity": "WARNING"
-            })
-    
-    # Check 4: Price anomalies (selling below cost)
-    sales = db.query(Sale).all()
-    for sale in sales:
-        if sale.product and sale.unit_price < sale.product.cost_price:
-            anomalies.append({
-                "type": "SELLING_BELOW_COST",
-                "product_id": sale.product_id,
-                "product_name": sale.product.name,
-                "unit_price": sale.unit_price,
-                "cost_price": sale.product.cost_price,
-                "severity": "CRITICAL"
-            })
-    
-    return anomalies
-
-
-def calculate_wastage_risk(db: Session) -> dict:
-    """Calculate potential wastage (expiry loss value)"""
-    
-    batches = db.query(Batch).filter(
-        Batch.status.in_([ExpiryStatus.CRITICAL, ExpiryStatus.EXPIRED])
-    ).all()
-    
-    total_units_at_risk = 0
-    total_value_at_risk = Decimal(0)
-    critical_value = Decimal(0)
-    
-    for batch in batches:
-        if batch.product:
-            units = batch.quantity_remaining or 0
-            value = units * (batch.product.selling_price or 0)
-            
-            total_units_at_risk += units
-            total_value_at_risk += Decimal(str(value))
-            
-            if batch.status == ExpiryStatus.CRITICAL:
-                critical_value += Decimal(str(value))
-    
-    return {
-        "total_units_at_risk": total_units_at_risk,
-        "total_value_at_risk": total_value_at_risk,
-        "critical_value": critical_value,
-        "critical_units": sum(
-            b.quantity_remaining or 0
-            for b in batches
-            if b.status == ExpiryStatus.CRITICAL
+def _named_amounts(agg: dict, names: dict, total_revenue: float, limit: int = 20) -> list[NamedAmount]:
+    ordered = sorted(agg.items(), key=lambda kv: kv[1][1], reverse=True)[:limit]
+    return [
+        NamedAmount(
+            id=key, name=names.get(key, "Uncategorised"), units_sold=v[0], revenue=round(float(v[1]), 2),
+            share_pct=round(float(v[1]) / total_revenue * 100, 2) if total_revenue else 0.0,
         )
-    }
+        for key, v in ordered
+    ]
 
 
-def get_dashboard_summary(db: Session) -> dict:
-    """Get all metrics for dashboard"""
-    
-    inventory = get_inventory_metrics(db)
-    sales = get_sales_metrics(db)
-    anomalies = detect_anomalies(db)
-    wastage = calculate_wastage_risk(db)
-    
-    return {
-        "inventory": {
-            "total_products": inventory.total_products,
-            "total_stock_units": inventory.total_stock_units,
-            "total_stock_value": float(inventory.total_stock_value),
-            "expired": inventory.expired_products,
-            "critical": inventory.critical_products,
-            "expiring_soon": inventory.expiring_soon_products,
-            "safe": inventory.safe_products
-        },
-        "sales": {
-            "total_sales": sales.total_sales,
-            "total_revenue": float(sales.total_revenue),
-            "total_cost": float(sales.total_cost),
-            "gross_profit": float(sales.gross_profit),
-            "gross_margin": sales.gross_margin,
-            "units_sold": sales.units_sold,
-            "avg_sale_value": float(sales.avg_sale_value)
-        },
-        "risk": {
-            "total_units_at_risk": wastage["total_units_at_risk"],
-            "total_value_at_risk": float(wastage["total_value_at_risk"]),
-            "critical_value": float(wastage["critical_value"])
-        },
-        "anomalies_count": len(anomalies),
-        "anomalies": anomalies[:5]  # Top 5 anomalies
+def _series(sales, start: date, end: date, granularity: str, tz: str) -> list[SeriesPoint]:
+    agg = {d: [Decimal("0"), 0] for d in bucket_series(start, end, granularity)}
+    for _, _, _, qty, amount, _, sold_at in sales:
+        key = bucket_start(local_date(sold_at, tz), granularity)
+        if key in agg:
+            agg[key][0] += amount
+            agg[key][1] += qty
+    return [SeriesPoint(period=k, revenue=to_float(v[0]), units_sold=v[1]) for k, v in sorted(agg.items())]
+
+
+async def sales_analytics(
+    db: AsyncSession, company_id: uuid.UUID, date_from: date | None = None, date_to: date | None = None
+) -> SalesAnalytics:
+    company, today = await _context(db, company_id)
+    date_to = date_to or today
+    date_from = date_from or date_to - timedelta(days=settings.ANALYTICS_DEFAULT_DAYS - 1)
+    if date_from > date_to:
+        raise BadRequestError("date_from must be on or before date_to")
+    span = (date_to - date_from).days + 1
+    if span > 731:
+        raise BadRequestError("Date range cannot exceed two years")
+
+    in_range = await load_sales(db, company, date_from, date_to)
+    previous = await load_sales(db, company, date_from - timedelta(days=span), date_from - timedelta(days=1))
+    year_start = add_months(month_start(today), -11)
+    long_window = await load_sales(db, company, min(year_start, week_start(today) - timedelta(weeks=11)), today)
+
+    revenue = float(sum((r[4] for r in in_range), Decimal("0")))
+    prev_revenue = float(sum((r[4] for r in previous), Decimal("0")))
+
+    product_names: dict[uuid.UUID | None, str] = {}
+    by_product: dict = defaultdict(lambda: [0, Decimal("0")])
+    by_category: dict = defaultdict(lambda: [0, Decimal("0")])
+    for pid, name, cid, qty, amount, _, _ in in_range:
+        product_names[pid] = name
+        by_product[pid][0] += qty
+        by_product[pid][1] += amount
+        by_category[cid][0] += qty
+        by_category[cid][1] += amount
+    category_names = {
+        cid: name for cid, name in (
+            await db.execute(select(Category.id, Category.name).where(Category.company_id == company_id))
+        ).all()
     }
+    category_names[None] = "Uncategorised"
+
+    return SalesAnalytics(
+        date_from=date_from,
+        date_to=date_to,
+        revenue=round(revenue, 2),
+        units_sold=sum(r[3] for r in in_range),
+        transactions=len(in_range),
+        average_daily_revenue=round(revenue / span, 2),
+        growth_pct=pct_change(revenue, prev_revenue),
+        daily=_series(in_range, date_from, date_to, "day", company.timezone),
+        weekly=_series(long_window, week_start(today) - timedelta(weeks=11), today, "week", company.timezone),
+        monthly=_series(long_window, year_start, today, "month", company.timezone),
+        by_product=_named_amounts(by_product, product_names, revenue),
+        by_category=_named_amounts(by_category, category_names, revenue),
+    )
+
+
+# --------------------------------------------------------------------------- products & inventory
+
+
+async def product_performance(
+    db: AsyncSession, company: Company, today: date, window_days: int
+) -> list[ProductPerformance]:
+    sales = await load_sales(db, company, today - timedelta(days=window_days - 1), today)
+    units = units_by_product(sales)
+    revenue: dict[uuid.UUID, Decimal] = defaultdict(lambda: Decimal("0"))
+    for pid, _, _, _, amount, _, _ in sales:
+        revenue[pid] += amount
+
+    batches = await load_batches(db, company.id)
+    sellable: dict[uuid.UUID, int] = defaultdict(int)
+    for b in batches:
+        if b.expiry_date > today:
+            sellable[b.product_id] += b.remaining
+
+    products = (
+        await db.execute(
+            select(Product.id, Product.name, Product.sku, Category.name)
+            .outerjoin(Category, Category.id == Product.category_id)
+            .where(Product.company_id == company.id, Product.is_active.is_(True))
+        )
+    ).all()
+
+    sellers = sorted((units[p.id] for p in products if units[p.id] > 0), reverse=True)
+    fast_cutoff = sellers[max(0, int(len(sellers) * FAST_SHARE) - 1)] if sellers else None
+    median_units = statistics.median(sellers) if sellers else 0
+    stocked_velocities = sorted(units[p.id] / window_days for p in products if sellable[p.id] > 0)
+    slow_cutoff = (
+        stocked_velocities[max(0, int(len(stocked_velocities) * FAST_SHARE) - 1)] if stocked_velocities else None
+    )
+
+    out: list[ProductPerformance] = []
+    for pid, name, sku, category_name in products:
+        u = units[pid]
+        stock = sellable[pid]
+        velocity = u / window_days
+        cover = round(stock / velocity, 1) if velocity > 0 else None
+        if velocity > 0 and cover is not None and cover < LOW_COVER_DAYS and u >= median_units:
+            cls = "LOW_STOCK_HIGH_SALES"
+        elif stock > 0 and (velocity == 0 or (cover is not None and cover > HIGH_COVER_DAYS)):
+            cls = "HIGH_STOCK_LOW_SALES"
+        elif fast_cutoff is not None and u > 0 and u >= fast_cutoff:
+            cls = "FAST_MOVER"
+        elif slow_cutoff is not None and stock > 0 and velocity <= slow_cutoff:
+            cls = "SLOW_MOVER"
+        else:
+            cls = "NORMAL"
+        out.append(
+            ProductPerformance(
+                product_id=pid, product_name=name, sku=sku, category_name=category_name, stock=stock,
+                units_sold=u, revenue=to_float(revenue[pid]), daily_velocity=round(velocity, 3),
+                days_of_cover=cover, classification=cls,
+            )
+        )
+    return out
+
+
+async def product_analytics(db: AsyncSession, company_id: uuid.UUID, window_days: int | None = None) -> ProductAnalytics:
+    company, today = await _context(db, company_id)
+    window = window_days or settings.ANALYTICS_DEFAULT_DAYS
+    perf = await product_performance(db, company, today, window)
+    sellers = sorted([p for p in perf if p.units_sold > 0], key=lambda p: p.units_sold, reverse=True)
+    n_fast = max(1, int(len(sellers) * FAST_SHARE)) if sellers else 0
+    stocked = sorted([p for p in perf if p.stock > 0], key=lambda p: p.daily_velocity)
+    n_slow = max(1, int(len(stocked) * FAST_SHARE)) if stocked else 0
+    return ProductAnalytics(
+        window_days=window,
+        fast_movers=sellers[:n_fast],
+        slow_movers=stocked[:n_slow],
+        high_stock_low_sales=sorted(
+            [p for p in perf if p.classification == "HIGH_STOCK_LOW_SALES"], key=lambda p: -(p.days_of_cover or 1e9)
+        ),
+        low_stock_high_sales=sorted(
+            [p for p in perf if p.classification == "LOW_STOCK_HIGH_SALES"], key=lambda p: p.days_of_cover or 0
+        ),
+        products=sorted(perf, key=lambda p: p.revenue, reverse=True),
+    )
+
+
+async def inventory_analytics(db: AsyncSession, company_id: uuid.UUID, window_days: int | None = None) -> InventoryAnalytics:
+    company, today = await _context(db, company_id)
+    window = window_days or settings.ANALYTICS_DEFAULT_DAYS
+    batches = await load_batches(db, company_id)
+    metrics = inventory_metrics(batches, today, await count_active_products(db, company_id), thresholds_for(company))
+    sales = await load_sales(db, company, today - timedelta(days=window - 1), today)
+    velocity = {pid: u / window for pid, u in units_by_product(sales).items()}
+    risk = expiry_risk(batches, velocity, today)
+    cogs = sum((r[5] * r[3] for r in sales), Decimal("0"))
+    stock_value = Decimal(str(metrics.inventory_value))
+    turnover = round(float(cogs / stock_value), 3) if stock_value > 0 else None
+    breakdown = {
+        "EXPIRED": metrics.expired_units, "CRITICAL": metrics.critical_units,
+        "ACTION_REQUIRED": metrics.action_required_units, "MONITOR": metrics.monitor_units,
+        "SAFE": metrics.safe_units,
+    }
+    return InventoryAnalytics(
+        as_of=today,
+        metrics=metrics,
+        status_breakdown=breakdown,
+        stock_turnover=turnover,
+        annualized_turnover=round(turnover * 365 / window, 2) if turnover is not None else None,
+        expiry_risk=risk[:100],
+        potential_waste_units=sum(i.units_at_risk for i in risk),
+        potential_waste_value=round(sum(i.value_at_risk for i in risk), 2),
+    )
+
+
+async def trends(db: AsyncSession, company_id: uuid.UUID, granularity: str = "day", periods: int = 30) -> TrendsAnalytics:
+    if granularity not in {"day", "week", "month"}:
+        raise BadRequestError("granularity must be day, week or month")
+    company, today = await _context(db, company_id)
+    if granularity == "day":
+        start = today - timedelta(days=periods - 1)
+    elif granularity == "week":
+        start = week_start(today) - timedelta(weeks=periods - 1)
+    else:
+        start = add_months(month_start(today), -(periods - 1))
+    sales = await load_sales(db, company, start, today)
+    points = _series(sales, start, today, granularity, company.timezone)
+    moving = []
+    if granularity == "day":
+        for i, p in enumerate(points):
+            window = points[max(0, i - 6): i + 1]
+            moving.append({
+                "period": p.period.isoformat(),
+                "revenue": round(sum(w.revenue for w in window) / len(window), 2),
+                "units_sold": round(sum(w.units_sold for w in window) / len(window), 2),
+            })
+    return TrendsAnalytics(granularity=granularity, points=points, moving_average_7d=moving)

@@ -1,121 +1,68 @@
-"""Product CRUD routes"""
+import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
-from app.core.security import get_current_user
-from app.core.database import get_db
-from app.models.user import User
-from app.models.product import Product
-from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse
+from app.core.exceptions import error_responses
+from app.dependencies.auth import AdminUser, StaffUser
+from app.dependencies.database import DbSession
+from app.schemas import Page
+from app.models import UserRole
+from app.schemas.product import ProductCreate, ProductRead, ProductUpdate, scrub_cost
+from app.services import product_service
+from app.utils.helpers import client_ip
+from app.utils.pagination import PageParams, page_meta, page_params
 
-router = APIRouter(prefix="/products", tags=["products"])
-
-
-@router.get("", response_model=list[ProductResponse])
-def list_products(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """List all products for user"""
-    products = db.query(Product).filter(Product.user_id == current_user.id).all()
-    return products
+router = APIRouter(prefix="/products", tags=["Products"])
 
 
-@router.post("", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
-def create_product(
-    product_data: ProductCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Create new product"""
-    # Check if SKU already exists for this user
-    existing = db.query(Product).filter(
-        Product.user_id == current_user.id,
-        Product.sku == product_data.sku,
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Product with SKU {product_data.sku} already exists"
-        )
-    
-    db_product = Product(
-        user_id=current_user.id,
-        name=product_data.name,
-        sku=product_data.sku,
-        barcode=product_data.barcode,
-        category=product_data.category,
-        brand=product_data.brand,
-        unit=product_data.unit or "pieces",
-        selling_price=product_data.selling_price if product_data.selling_price is not None else (product_data.unit_price or 0.0),
-        cost_price=product_data.cost_price,
-        unit_price=product_data.unit_price if product_data.unit_price is not None else product_data.selling_price,
-        description=product_data.description,
+@router.get("", response_model=Page[ProductRead], summary="List / search products",
+            description="Search by name, SKU, barcode or brand; filter by category; exact barcode or SKU lookup. "
+                        "Each item includes total and sellable stock.",
+            responses=error_responses(401, 422))
+async def list_products(
+    user: StaffUser,
+    db: DbSession,
+    params: PageParams = Depends(page_params),
+    search: str | None = Query(None, max_length=100),
+    category_id: uuid.UUID | None = None,
+    barcode: str | None = Query(None, max_length=64),
+    sku: str | None = Query(None, max_length=64),
+    include_inactive: bool = False,
+) -> Page[ProductRead]:
+    items, total = await product_service.list_products(
+        db, user.company_id, params, search=search, category_id=category_id, barcode=barcode, sku=sku,
+        include_inactive=include_inactive,
     )
-    db.add(db_product)
-    db.commit()
-    db.refresh(db_product)
-    return db_product
+    admin = user.role == UserRole.ADMIN
+    return Page(items=[scrub_cost(i, admin) for i in items], **page_meta(total, params))
 
 
-@router.get("/{product_id}", response_model=ProductResponse)
-def get_product(
-    product_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Get product by ID"""
-    product = db.query(Product).filter(Product.id == product_id, Product.user_id == current_user.id).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-    return product
+@router.post("", response_model=ProductRead, status_code=status.HTTP_201_CREATED, summary="Create product",
+             description="SKU and barcode are unique within your company. At least one is required. ADMIN.",
+             responses=error_responses(401, 403, 404, 409, 422))
+async def create_product(data: ProductCreate, user: AdminUser, request: Request, db: DbSession) -> ProductRead:
+    return await product_service.create_product(db, user, data, client_ip(request))
 
 
-@router.patch("/{product_id}", response_model=ProductResponse)
-@router.put("/{product_id}", response_model=ProductResponse)
-def update_product(
-    product_id: int,
-    product_data: ProductUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Update product"""
-    product = db.query(Product).filter(Product.id == product_id, Product.user_id == current_user.id).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-    
-    update_data = product_data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(product, key, value)
-
-    if product_data.selling_price is not None:
-        product.unit_price = product_data.selling_price
-        product.selling_price = product_data.selling_price
-
-    if product_data.cost_price is not None:
-        product.cost_price = product_data.cost_price
-
-    if product_data.unit_price is not None:
-        product.unit_price = product_data.unit_price
-        product.selling_price = product_data.unit_price
-    
-    db.commit()
-    db.refresh(product)
-    return product
+@router.get("/{product_id}", response_model=ProductRead, summary="Get product",
+            description="Product with live stock figures.", responses=error_responses(401, 404))
+async def get_product(product_id: uuid.UUID, user: StaffUser, db: DbSession) -> ProductRead:
+    read = await product_service.get_product_read(db, user.company_id, product_id)
+    return scrub_cost(read, user.role == UserRole.ADMIN)
 
 
-@router.delete("/{product_id}", status_code=204)
-def delete_product(
-    product_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Delete product"""
-    product = db.query(Product).filter(Product.id == product_id, Product.user_id == current_user.id).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-    
-    db.delete(product)
-    db.commit()
-    return None
+@router.patch("/{product_id}", response_model=ProductRead, summary="Update product",
+              description="Partial update. Set is_active=true to reactivate a deleted product. ADMIN.",
+              responses=error_responses(401, 403, 404, 409, 422))
+async def update_product(
+    product_id: uuid.UUID, data: ProductUpdate, user: AdminUser, request: Request, db: DbSession
+) -> ProductRead:
+    return await product_service.update_product(db, user, product_id, data, client_ip(request))
+
+
+@router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete product",
+               description="Soft delete (is_active=false); sales and inventory history are preserved. ADMIN only.",
+               responses=error_responses(401, 403, 404))
+async def delete_product(product_id: uuid.UUID, user: AdminUser, request: Request, db: DbSession) -> Response:
+    await product_service.delete_product(db, user, product_id, client_ip(request))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

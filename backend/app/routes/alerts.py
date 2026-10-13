@@ -1,112 +1,86 @@
-"""Alert routes"""
+import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, field_validator
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Request
 
-from app.core.security import get_current_user
-from app.core.database import get_db
-from app.models.user import User
-from app.models.alert import Alert
-from app.schemas.alert import AlertResponse
-from app.services.alert_service import (
-    mark_alert_read,
-    get_critical_alerts,
-    get_expired_alerts,
-    generate_alerts_for_all_batches,
-)
+from app.core.exceptions import error_responses
+from app.dependencies.auth import AdminUser, StaffUser
+from app.dependencies.database import DbSession
+from app.models import AlertSeverity, AlertType
+from app.schemas import Page
+from app.schemas.alerts import AlertRead, TestSMSRequest
+from app.schemas.notifications import NotificationRead
+from app.services import alert_service, notification_service
+from app.utils.helpers import client_ip
+from app.utils.pagination import PageParams, page_meta, page_params
 
-router = APIRouter(prefix="/alerts", tags=["alerts"])
+router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
 
-class TestSMSRequest(BaseModel):
-    phone_number: str
-    message: str = "Test alert message"
-
-    @field_validator("phone_number")
-    @classmethod
-    def validate_phone_number(cls, value: str) -> str:
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("phone_number is required")
-        if len(cleaned) < 8 or len(cleaned) > 16:
-            raise ValueError("phone_number must be 8-16 characters")
-        if not any(ch.isdigit() for ch in cleaned):
-            raise ValueError("phone_number must contain digits")
-        return cleaned
+async def _page(user, db, params, **filters) -> Page[AlertRead]:
+    items, total = await alert_service.list_alerts(db, user.company_id, params, **filters)
+    return Page(items=[AlertRead.model_validate(a) for a in items], **page_meta(total, params))
 
 
-@router.get("", response_model=list[AlertResponse])
-def list_alerts(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """List all alerts"""
-    alerts = db.query(Alert).order_by(Alert.created_at.desc()).all()
-    return alerts
+@router.get("", response_model=Page[AlertRead], summary="List alerts",
+            description="Newest first. Filter by type, severity, read and resolved state.",
+            responses=error_responses(401, 422))
+async def list_alerts(
+    user: StaffUser, db: DbSession, params: PageParams = Depends(page_params),
+    alert_type: AlertType | None = None, severity: AlertSeverity | None = None,
+    is_read: bool | None = None, is_resolved: bool | None = None, product_id: uuid.UUID | None = None,
+) -> Page[AlertRead]:
+    return await _page(
+        user, db, params, alert_types=[alert_type] if alert_type else None, severity=severity,
+        is_read=is_read, is_resolved=is_resolved, product_id=product_id,
+    )
 
 
-@router.get("/critical", response_model=list[AlertResponse])
-def get_critical(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Get critical alerts"""
-    return get_critical_alerts(db)
+@router.get("/critical", response_model=Page[AlertRead], summary="Open critical-expiry alerts",
+            description="Unresolved CRITICAL_EXPIRY alerts.", responses=error_responses(401))
+async def critical_alerts(user: StaffUser, db: DbSession, params: PageParams = Depends(page_params)) -> Page[AlertRead]:
+    return await _page(user, db, params, alert_types=[AlertType.CRITICAL_EXPIRY], is_resolved=False)
 
 
-@router.get("/expired", response_model=list[AlertResponse])
-def get_expired(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Get expired alerts"""
-    return get_expired_alerts(db)
+@router.get("/expired", response_model=Page[AlertRead], summary="Open expired alerts",
+            description="Unresolved EXPIRED alerts.", responses=error_responses(401))
+async def expired_alerts(user: StaffUser, db: DbSession, params: PageParams = Depends(page_params)) -> Page[AlertRead]:
+    return await _page(user, db, params, alert_types=[AlertType.EXPIRED], is_resolved=False)
 
 
-@router.post("/test-sms", status_code=status.HTTP_200_OK)
-def test_sms(
-    payload: TestSMSRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Send a test SMS message with the current user's phone number when available."""
-    phone_number = payload.phone_number
-    message = payload.message
-    try:
-        from app.services.sms_service import SMSService
-
-        sms_service = SMSService()
-        result = sms_service.send_test_sms(phone_number, message)
-        return {
-            "success": result.get("success", True),
-            "message_id": result.get("message_id"),
-            "error": result.get("error"),
-            "provider": sms_service.provider_name,
-            "phone_number": phone_number,
-        }
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        raise HTTPException(status_code=503, detail=f"SMS test failed: {exc}") from exc
+@router.get("/expiring-soon", response_model=Page[AlertRead], summary="Open expiring-soon alerts",
+            description="Unresolved EXPIRING_SOON alerts.", responses=error_responses(401))
+async def expiring_soon_alerts(
+    user: StaffUser, db: DbSession, params: PageParams = Depends(page_params)
+) -> Page[AlertRead]:
+    return await _page(user, db, params, alert_types=[AlertType.EXPIRING_SOON], is_resolved=False)
 
 
-@router.patch("/{alert_id}/read", response_model=AlertResponse)
-def mark_read(
-    alert_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Mark alert as read"""
-    alert = mark_alert_read(db, alert_id)
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
-    return alert
+@router.post("/test-sms", response_model=NotificationRead, summary="Send a test SMS",
+             description="Sends through the configured provider (mock or live) and records a notification. "
+                         "A provider failure is returned as status FAILED with error_message, not as an HTTP error. "
+                         "ADMIN.",
+             responses=error_responses(401, 403, 422))
+async def test_sms(data: TestSMSRequest, user: AdminUser, db: DbSession) -> NotificationRead:
+    return NotificationRead.model_validate(
+        await notification_service.send_test_sms(db, user, data.phone_number, data.message)
+    )
 
 
-@router.post("/refresh")
-def refresh_alerts(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Recalculate all alerts (can be called periodically)"""
-    generate_alerts_for_all_batches(db)
-    return {"status": "alerts refreshed"}
+@router.get("/{alert_id}", response_model=AlertRead, summary="Get alert",
+            description="Single alert including SMS delivery state.", responses=error_responses(401, 404))
+async def get_alert(alert_id: uuid.UUID, user: StaffUser, db: DbSession) -> AlertRead:
+    return AlertRead.model_validate(await alert_service.get_alert(db, user.company_id, alert_id))
+
+
+@router.patch("/{alert_id}/read", response_model=AlertRead, summary="Mark alert read",
+              description="Any role.", responses=error_responses(401, 404))
+async def mark_read(alert_id: uuid.UUID, user: StaffUser, db: DbSession) -> AlertRead:
+    return AlertRead.model_validate(await alert_service.mark_read(db, user, alert_id))
+
+
+@router.patch("/{alert_id}/resolve", response_model=AlertRead, summary="Resolve alert",
+              description="Closes the alert. A new alert of the same type can then be raised if the condition "
+                          "persists at the next check. ADMIN.",
+              responses=error_responses(401, 403, 404))
+async def resolve(alert_id: uuid.UUID, user: AdminUser, request: Request, db: DbSession) -> AlertRead:
+    return AlertRead.model_validate(await alert_service.resolve(db, user, alert_id, client_ip(request)))

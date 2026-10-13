@@ -1,122 +1,51 @@
-"""Dashboard and summary analytics"""
+from fastapi import APIRouter
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from datetime import date, datetime, timedelta
+from app.core.exceptions import error_responses
+from app.dependencies.auth import AdminUser
+from app.dependencies.database import DbSession
+from app.schemas.dashboard import (
+    DashboardAlerts,
+    DashboardInsights,
+    DashboardInventory,
+    DashboardSales,
+    DashboardSummary,
+)
+from app.services import dashboard_service
 
-from app.core.database import get_db
-from app.models.batch import Batch, ExpiryStatus
-from app.models.alert import Alert, AlertType
-from app.models.sale import Sale
-from app.models.product import Product
-
-router = APIRouter(tags=["dashboard"])
-
-
-@router.get("/dashboard/summary")
-def get_dashboard_summary(db: Session = Depends(get_db), user_id: int = 1):
-    """Get dashboard summary stats"""
-    
-    # Get user's products
-    products = db.query(Product).filter(Product.user_id == user_id).all()
-    product_ids = [p.id for p in products]
-    
-    if not product_ids:
-        return {
-            "total_products": 0,
-            "total_batches": 0,
-            "safe_batches": 0,
-            "expiring_soon": 0,
-            "critical": 0,
-            "expired": 0,
-            "unread_alerts": 0,
-            "total_sales_today": 0,
-            "total_revenue_today": 0,
-        }
-    
-    # Batch stats
-    total_batches = db.query(Batch).filter(Batch.product_id.in_(product_ids)).count()
-    safe = db.query(Batch).filter(
-        Batch.product_id.in_(product_ids),
-        Batch.status == ExpiryStatus.SAFE
-    ).count()
-    expiring = db.query(Batch).filter(
-        Batch.product_id.in_(product_ids),
-        Batch.status == ExpiryStatus.EXPIRING_SOON
-    ).count()
-    critical = db.query(Batch).filter(
-        Batch.product_id.in_(product_ids),
-        Batch.status == ExpiryStatus.CRITICAL
-    ).count()
-    expired = db.query(Batch).filter(
-        Batch.product_id.in_(product_ids),
-        Batch.status == ExpiryStatus.EXPIRED
-    ).count()
-    
-    # Alert stats
-    unread_alerts = db.query(Alert).join(Batch).filter(
-        Batch.product_id.in_(product_ids),
-        Alert.is_read == False
-    ).count()
-    
-    # Sales stats (today)
-    today = datetime.combine(date.today(), datetime.min.time())
-    tomorrow = today + timedelta(days=1)
-    sales_today = db.query(Sale).filter(
-        Sale.product_id.in_(product_ids),
-        Sale.sold_at >= today,
-        Sale.sold_at < tomorrow,
-    ).all()
-
-    total_sales = sum(s.quantity for s in sales_today)
-    total_revenue = sum(s.total_amount for s in sales_today)
-    
-    return {
-        "total_products": len(products),
-        "total_batches": total_batches,
-        "safe_batches": safe,
-        "expiring_soon": expiring,
-        "critical": critical,
-        "expired": expired,
-        "unread_alerts": unread_alerts,
-        "total_sales_today": total_sales,
-        "total_revenue_today": total_revenue,
-    }
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
-@router.get("/insights")
-def get_insights(db: Session = Depends(get_db), user_id: int = 1):
-    """Get business insights"""
-    products = db.query(Product).filter(Product.user_id == user_id).all()
-    product_ids = [p.id for p in products]
-    
-    insights = []
-    
-    if product_ids:
-        # Insight: High waste risk
-        expired_count = db.query(Batch).filter(
-            Batch.product_id.in_(product_ids),
-            Batch.status == ExpiryStatus.EXPIRED
-        ).count()
-        if expired_count > 0:
-            insights.append({
-                "type": "waste_risk",
-                "title": "High Waste Risk",
-                "description": f"{expired_count} batches have expired",
-                "severity": "high",
-            })
-        
-        # Insight: Upcoming expiries
-        critical_count = db.query(Batch).filter(
-            Batch.product_id.in_(product_ids),
-            Batch.status == ExpiryStatus.CRITICAL
-        ).count()
-        if critical_count > 0:
-            insights.append({
-                "type": "critical_expiry",
-                "title": "Critical Expiry Alert",
-                "description": f"{critical_count} batches expire within 30 days",
-                "severity": "medium",
-            })
-    
-    return {"insights": insights}
+@router.get("/summary", response_model=DashboardSummary, summary="Dashboard summary",
+            description="Headline KPIs: products, stock, expired, critical alerts, expiring soon, sales, revenue, "
+                        "inventory value, top products and recent alerts.",
+            responses=error_responses(401))
+async def summary(user: AdminUser, db: DbSession) -> DashboardSummary:
+    return await dashboard_service.summary(db, user.company_id)
+
+
+@router.get("/alerts", response_model=DashboardAlerts, summary="Alerts panel",
+            description="Open alerts by type and severity, unread count, SMS delivery totals, recent alerts.",
+            responses=error_responses(401))
+async def alerts(user: AdminUser, db: DbSession) -> DashboardAlerts:
+    return await dashboard_service.alerts(db, user.company_id)
+
+
+@router.get("/sales", response_model=DashboardSales, summary="Sales panel",
+            description="Revenue today / 7d / 30d, growth vs previous 30 days, daily series, top products.",
+            responses=error_responses(401))
+async def sales(user: AdminUser, db: DbSession) -> DashboardSales:
+    return await dashboard_service.sales(db, user.company_id)
+
+
+@router.get("/inventory", response_model=DashboardInventory, summary="Inventory panel",
+            description="Units by expiry status, value at risk, batches expiring within 30 days, low-stock list.",
+            responses=error_responses(401))
+async def inventory(user: AdminUser, db: DbSession) -> DashboardInventory:
+    return await dashboard_service.inventory(db, user.company_id)
+
+
+@router.get("/insights", response_model=DashboardInsights, summary="AI insights panel",
+            description="Validated AI insights from the last 7 days by category and severity, plus the latest ones.",
+            responses=error_responses(401))
+async def insights(user: AdminUser, db: DbSession) -> DashboardInsights:
+    return await dashboard_service.insights(db, user.company_id)

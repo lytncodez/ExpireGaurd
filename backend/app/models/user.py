@@ -1,27 +1,51 @@
-"""User ORM model"""
+"""User accounts, roles and revoked (logged-out) tokens."""
 
-from sqlalchemy import Column, Integer, String, DateTime, Boolean
-from sqlalchemy.orm import relationship
+from __future__ import annotations
+
+import enum
+import uuid
 from datetime import datetime
 
-from app.core.database import Base
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Uuid
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.database import Base, CreatedAtMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
 
-class User(Base):
+class UserRole(str, enum.Enum):
+    """Matches the frontend: admins manage everything; dispensers never see cost or supplier data."""
+
+    ADMIN = "admin"
+    DISPENSER = "dispenser"
+
+
+def str_enum(enum_cls: type[enum.Enum], length: int = 32) -> Enum:
+    """Portable VARCHAR-backed enum (no native PG enum: simpler migrations)."""
+    return Enum(enum_cls, native_enum=False, length=length, values_callable=lambda e: [m.value for m in e])
+
+
+class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    full_name = Column(String, nullable=True)
-    phone = Column(String, nullable=True)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    phone_number: Mapped[str | None] = mapped_column(String(32))
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[UserRole] = mapped_column(str_enum(UserRole, 16), nullable=False, default=UserRole.DISPENSER)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    @property
-    def name(self):
-        return self.full_name
 
-    # Relationships
-    products = relationship("Product", back_populates="user", cascade="all, delete-orphan")
+class RevokedToken(CreatedAtMixin, Base):
+    """JWT ids invalidated by logout. Purged by the cleanup job after expiry."""
+
+    __tablename__ = "revoked_tokens"
+
+    jti: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

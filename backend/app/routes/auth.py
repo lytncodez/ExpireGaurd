@@ -1,79 +1,110 @@
-"""Authentication routes"""
+from fastapi import APIRouter, Depends, Request, status
 
-from typing import Any
+from app.core.config import settings
+from app.core.exceptions import error_responses
+from app.dependencies.auth import CurrentUser, TokenPayload, rate_limit
+from app.dependencies.database import DbSession
+from app.schemas import MessageResponse
+from app.schemas.auth import (
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
+    LoginRequest,
+    RegisterRequest,
+    RegisterResponse,
+    ResetPasswordRequest,
+    TokenResponse,
+)
+from app.schemas.company import CompanyRead
+from app.schemas.user import UserRead
+from app.services import auth_service
+from app.utils.helpers import client_ip
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from sqlalchemy.orm import Session
-
-from app.core.database import get_db
-from app.core.security import create_access_token, get_current_user
-from app.models.user import User
-from app.schemas.user import UserCreate, UserLogin, UserResponse
-from app.services.auth_service import create_user, authenticate_user, get_user_by_email
-
-router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(user_data: UserCreate, db: Session = Depends(get_db)):
-    """Register new user"""
-    # Check if user exists
-    existing = get_user_by_email(db, user_data.email)
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered"
-        )
-    
-    # Create user
-    user = create_user(db, user_data)
-    return user
+router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.post("/login")
-async def login(
-    request: Request,
-    db: Session = Depends(get_db),
-    username: str | None = Form(default=None),
-    password: str | None = Form(default=None),
-):
-    """Login and get access token"""
-    email = username
-    password_value = password
-
-    if email is None or password_value is None:
-        try:
-            data = await request.json()
-        except Exception:
-            data = {}
-        email = data.get("email") or email
-        password_value = data.get("password") or password_value
-
-    if not email or not password_value:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        )
-
-    user = authenticate_user(db, email, password_value)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
-    # Create token
-    access_token = create_access_token({"sub": str(user.id)})
-    return {"access_token": access_token, "token_type": "bearer", "user": user}
+@router.post(
+    "/register",
+    response_model=RegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Sign up",
+    description="The first account on a fresh install creates the pharmacy and becomes its admin. Later sign-ups "
+                "join the pharmacy as dispensers (disable with ALLOW_PUBLIC_SIGNUP=false). Returns an access token.",
+    responses=error_responses(409, 422, 429),
+    dependencies=[Depends(rate_limit("register"))],
+)
+async def register(data: RegisterRequest, request: Request, db: DbSession) -> RegisterResponse:
+    user, company = await auth_service.register(db, data, client_ip(request))
+    token, expires = auth_service.issue_token(user)
+    return RegisterResponse(
+        access_token=token, expires_in=expires, user=UserRead.model_validate(user),
+        company=CompanyRead.model_validate(company),
+    )
 
 
-@router.get("/me", response_model=UserResponse)
-def me(current_user: User = Depends(get_current_user)):
-    """Get the authenticated user profile."""
-    return current_user
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Log in",
+    description="Exchange email and password for a JWT bearer token.",
+    responses=error_responses(401, 422, 429),
+    dependencies=[Depends(rate_limit("login"))],
+)
+async def login(data: LoginRequest, request: Request, db: DbSession) -> TokenResponse:
+    user = await auth_service.authenticate(db, data.email, data.password, client_ip(request))
+    token, expires = auth_service.issue_token(user)
+    return TokenResponse(access_token=token, expires_in=expires, user=UserRead.model_validate(user))
 
 
-@router.post("/logout")
-def logout(current_user: User = Depends(get_current_user)):
-    """Logout endpoint for clients that clear the token locally."""
-    return {"message": "Logged out successfully", "user_id": current_user.id}
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    summary="Log out",
+    description="Revokes the presented token; it cannot be used again.",
+    responses=error_responses(401),
+)
+async def logout(user: CurrentUser, payload: TokenPayload, request: Request, db: DbSession) -> MessageResponse:
+    await auth_service.logout(db, user, payload, client_ip(request))
+    return MessageResponse(message="Logged out")
+
+
+@router.get(
+    "/me",
+    response_model=UserRead,
+    summary="Current user",
+    description="Profile of the authenticated user.",
+    responses=error_responses(401),
+)
+async def me(user: CurrentUser) -> UserRead:
+    return UserRead.model_validate(user)
+
+
+@router.post(
+    "/forgot-password",
+    response_model=ForgotPasswordResponse,
+    summary="Request a password reset",
+    description=(
+        "Always returns the same message to avoid revealing which emails exist. The reset token is sent by SMS "
+        "if the user has a phone number. Outside production the token is also returned for local testing."
+    ),
+    responses=error_responses(422, 429),
+    dependencies=[Depends(rate_limit("forgot"))],
+)
+async def forgot_password(data: ForgotPasswordRequest, request: Request, db: DbSession) -> ForgotPasswordResponse:
+    token = await auth_service.forgot_password(db, data.email, client_ip(request))
+    return ForgotPasswordResponse(
+        message="If the account exists, password reset instructions have been sent.",
+        reset_token=token if settings.expose_reset_token else None,
+    )
+
+
+@router.post(
+    "/reset-password",
+    response_model=MessageResponse,
+    summary="Reset password",
+    description="Set a new password using a reset token. Tokens are single-use and expire.",
+    responses=error_responses(401, 422, 429),
+    dependencies=[Depends(rate_limit("reset"))],
+)
+async def reset_password(data: ResetPasswordRequest, request: Request, db: DbSession) -> MessageResponse:
+    await auth_service.reset_password(db, data.token, data.new_password, client_ip(request))
+    return MessageResponse(message="Password has been reset")
