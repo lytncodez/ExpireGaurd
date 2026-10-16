@@ -48,9 +48,27 @@ async def list_conversations(db: AsyncSession, user: User, params: PageParams) -
     stmt = (
         select(AIConversation)
         .where(AIConversation.company_id == user.company_id, AIConversation.user_id == user.id)
-        .order_by(AIConversation.updated_at.desc())
+        .order_by(AIConversation.is_pinned.desc(), AIConversation.updated_at.desc())
     )
     return await paginate(db, stmt, params)
+
+
+async def update_conversation(
+    db: AsyncSession,
+    user: User,
+    conversation_id: uuid.UUID,
+    title: str | None = None,
+    is_pinned: bool | None = None,
+) -> AIConversation:
+    conv = await get_conversation(db, user, conversation_id)
+    if title is not None:
+        conv.title = title
+    if is_pinned is not None:
+        conv.is_pinned = is_pinned
+    conv.updated_at = utcnow()
+    await db.commit()
+    await db.refresh(conv)
+    return conv
 
 
 async def list_messages(db: AsyncSession, conversation_id: uuid.UUID, limit: int | None = None) -> list[AIMessage]:
@@ -121,6 +139,23 @@ async def chat(
         out, grounded = _grounded_fallback(ctx, intent, question, facts)
         fallback_used = True
 
+    seasonal_card = out.seasonal_card
+    if seasonal_card is None and (intent == "SEASONAL_PURCHASE" or any(w in question.lower() for w in ["season", "stock up", "buying plan", "what to order", "what to buy"])):
+        try:
+            from app.services.seasonal_service import compute_seasonal_plan
+            seasonal_card = await compute_seasonal_plan(db, user.company_id, query=question)
+        except Exception as e:
+            logger.warning("Could not compute seasonal card: %s", e)
+
+    data_sources_used = ["Live Stock & Expiry Ledger", "Sales History (Stock Out)", "FEFO Risk Engine"]
+    tools_invoked = ["get_current_stock", "get_expiry_risks", "get_sales_history"]
+    if intent == "SEASONAL_PURCHASE" or seasonal_card is not None:
+        data_sources_used.append("Ghana Seasonal Demand RAG")
+        tools_invoked.append("compute_seasonal_plan")
+    if intent == "SUPPLIER_REVIEW":
+        data_sources_used.append("Supplier Delivery Log")
+        tools_invoked.append("get_supplier_history")
+
     db.add(AIMessage(conversation_id=conv.id, role=MessageRole.USER, content=question))
     await db.flush()
     assistant = AIMessage(
@@ -136,6 +171,9 @@ async def chat(
             "fallback_used": fallback_used,
             "guardrail_violations": violations,
             "as_of": ctx["business"]["as_of"],
+            "seasonal_card": seasonal_card.model_dump() if seasonal_card else None,
+            "data_sources_used": data_sources_used,
+            "tools_invoked": tools_invoked,
         },
     )
     db.add(assistant)
@@ -159,4 +197,8 @@ async def chat(
         fallback_used=fallback_used,
         provider=provider_name,
         model=model_name,
+        seasonal_card=seasonal_card,
+        data_sources_used=data_sources_used,
+        tools_invoked=tools_invoked,
+        charts=out.charts,
     )

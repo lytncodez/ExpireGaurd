@@ -34,6 +34,11 @@ INTENT_SECTIONS: dict[str, frozenset[str]] = {
     "LOW_STOCK": frozenset({"stock_risks", "patterns", "alerts", "expiry"}),
     "ANOMALIES": frozenset({"anomalies", "sales"}),
     "INVENTORY_OVERVIEW": frozenset({"inventory", "expiry", "alerts"}),
+    "SEASONAL_PURCHASE": ALL_SECTIONS,
+    "SUPPLIER_REVIEW": frozenset({"inventory", "expiry", "alerts"}),
+    "WEEKLY_REPORT": ALL_SECTIONS,
+    "DAILY_SUMMARY": ALL_SECTIONS,
+    "DISCOUNT_CLEARANCE": frozenset({"inventory", "expiry", "patterns"}),
     "PRIORITIES": ALL_SECTIONS,
     "GENERAL": ALL_SECTIONS,
 }
@@ -49,10 +54,15 @@ CATEGORY_SECTIONS: dict[InsightCategory, frozenset[str]] = {
 }
 
 _INTENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("SEASONAL_PURCHASE", ("season", "stock up", "buying plan", "upcoming", "what to order", "what should i stock", "what to buy")),
+    ("SUPPLIER_REVIEW", ("supplier", "send near-expiry", "distributor", "vendor", "short-dated")),
+    ("WEEKLY_REPORT", ("week", "weekly", "activity")),
+    ("DAILY_SUMMARY", ("daily", "summary")),
+    ("DISCOUNT_CLEARANCE", ("discount", "sell first", "clearance")),
     ("PRIORITIES", ("prioriti", "priority", "today", "focus", "first", "urgent", "what should i do", "action")),
-    ("HIGH_STOCK_LOW_SALES", ("high stock", "overstock", "too much stock", "excess", "low sales")),
-    ("EXPIRY_RISK", ("expir", "expire", "waste", "spoil", "shelf life", "fefo", "best before")),
-    ("SALES_TREND", ("sales", "revenue", "declin", "growth", "trend", "selling less", "selling more", "drop")),
+    ("HIGH_STOCK_LOW_SALES", ("high stock", "overstock", "too much stock", "excess", "low sales", "stop reorder")),
+    ("EXPIRY_RISK", ("expir", "expire", "waste", "spoil", "shelf life", "fefo", "best before", "lose")),
+    ("SALES_TREND", ("sales", "revenue", "declin", "growth", "trend", "selling less", "selling more", "drop", "fastest")),
     ("SLOW_MOVERS", ("slow", "not selling", "moving slowly", "dead stock", "stagnant")),
     ("LOW_STOCK", ("low stock", "run out", "running out", "stock out", "stockout", "reorder", "replenish", "restock")),
     ("ANOMALIES", ("anomal", "unusual", "strange", "abnormal", "spike", "odd")),
