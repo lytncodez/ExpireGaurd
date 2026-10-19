@@ -28,6 +28,7 @@ class AIConversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title: Mapped[str | None] = mapped_column(String(200))
+    is_pinned: Mapped[bool] = mapped_column(default=False, server_default="false")
 
 
 class AIMessage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):

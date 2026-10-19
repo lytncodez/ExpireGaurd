@@ -12,7 +12,16 @@ from app.core.exceptions import error_responses
 from app.dependencies.auth import AdminUser, rate_limit
 from app.dependencies.database import DbSession
 from app.schemas import Page
-from app.schemas.ai import AIStatus, ChatRequest, ChatResponse, ConversationDetail, ConversationRead, MessageRead
+from app.schemas.ai import (
+    AIStatus,
+    ChatRequest,
+    ChatResponse,
+    ConversationDetail,
+    ConversationRead,
+    ConversationUpdate,
+    MessageRead,
+    SeasonalRecommendationCard,
+)
 from app.utils.helpers import client_ip
 from app.utils.pagination import PageParams, page_meta, page_params
 
@@ -53,12 +62,36 @@ async def conversation_detail(conversation_id: uuid.UUID, user: AdminUser, db: D
     )
 
 
+@router.patch(
+    "/conversations/{conversation_id}", response_model=ConversationRead, summary="Update conversation",
+    description="Rename or pin/unpin a conversation.", responses=error_responses(401, 404),
+)
+async def patch_conversation(
+    conversation_id: uuid.UUID, data: ConversationUpdate, user: AdminUser, db: DbSession
+) -> ConversationRead:
+    from app.ai.conversation import update_conversation
+    conv = await update_conversation(db, user, conversation_id, title=data.title, is_pinned=data.is_pinned)
+    return ConversationRead.model_validate(conv)
+
+
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT,
                summary="Delete conversation", description="Deletes one of your conversations and its messages.",
                responses=error_responses(401, 404))
 async def remove_conversation(conversation_id: uuid.UUID, user: AdminUser, db: DbSession) -> Response:
     await delete_conversation(db, user, conversation_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/seasonal-plan", response_model=SeasonalRecommendationCard, summary="Compute seasonal purchase plan",
+    description="Deterministically aggregate stock, shelf-life runout, and seasonal demand. ADMIN.",
+    responses=error_responses(401, 403),
+)
+async def seasonal_plan(
+    user: AdminUser, db: DbSession, season: str = Query("RAINY"), query: str = Query("")
+) -> SeasonalRecommendationCard:
+    from app.services.seasonal_service import compute_seasonal_plan
+    return await compute_seasonal_plan(db, user.company_id, season_key=season, query=query)
 
 
 @router.get("/status", response_model=AIStatus, summary="AI provider status",

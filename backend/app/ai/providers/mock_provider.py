@@ -417,6 +417,49 @@ def build_chat(ctx: dict[str, Any], intent: str, question: str = "") -> dict[str
         else:
             insufficient = True
             lines.append("Inventory data is not available.")
+    elif intent == "SEASONAL_PURCHASE":
+        lines.append("Here is a purchase plan built from your current stock and sales history (for your review).")
+        lines.append("See the Seasonal Recommendation Card for quantities, confidence and estimated cost.")
+        lines.append("Demand uplift in a given season is an assumption and may differ from what actually sells.")
+        lines.append("Products with less than a year of sales history here are marked Low confidence.")
+        follow = ["What is expiring in the next 60 days?", "Which products sell fastest right now?", "How much stock value am I about to lose?"]
+    elif intent == "SUPPLIER_REVIEW":
+        risks = ctx.get("expiry_risks") or []
+        if risks:
+            lines.append("Short-dated batches to raise with suppliers before return windows close:")
+            for i, r in enumerate(risks[:5]):
+                lines.append(f"- {r['product']} (Batch {r['batch_number']}): {r['days_remaining']} days left, "
+                             f"{r['units_at_risk']} units.")
+                evidence.append(_ev(f"{r['product']} days remaining", r["days_remaining"], f"expiry_risks[{i}].days_remaining"))
+            lines.append("Check each supplier's return policy for these batches.")
+        else:
+            insufficient = True
+            lines.append("No short-dated batches need a supplier conversation right now.")
+        follow = ["What should I stop reordering?", "Which products are at highest expiry risk?", "What should I discount or sell first?"]
+    elif intent in ("WEEKLY_REPORT", "DAILY_SUMMARY"):
+        inv = ctx.get("inventory") or {}
+        w = ctx.get("waste_risk") or {}
+        alerts = ctx.get("alerts") or {}
+        lines.append(f"Activity Summary for {ctx.get('business', {}).get('name', 'Pharmacy')}:")
+        if inv:
+            lines.append(f"- Active inventory: {inv.get('total_units', 0)} units across {inv.get('total_products', 0)} items ({inv.get('inventory_value', 0)} {cur} total valuation).")
+            lines.append(f"- Expiry distribution: {inv.get('critical_units', 0)} critical units, {inv.get('action_required_units', 0)} action required, {inv.get('safe_units', 0)} safe units.")
+        if w:
+            lines.append(f"- Projected waste at risk: {w.get('projected_waste_value', 0)} {cur} across {w.get('batches_at_risk', 0)} batch(es).")
+        if alerts:
+            lines.append(f"- Open system alerts: {alerts.get('open_total', 0)} alerts require supervisor review.")
+        follow = ["What should I prioritise today?", "What should I stock up on this season?", "What should I stop reordering?"]
+    elif intent == "DISCOUNT_CLEARANCE":
+        risks = ctx.get("expiry_risks") or []
+        if risks:
+            lines.append("Batches recommended for immediate discount or FEFO clearance:")
+            for i, r in enumerate(risks[:5]):
+                lines.append(f"- {r['product']} (Batch {r['batch_number']}): {r['days_remaining']} days left to expiry. {r['units_at_risk']} units at risk.")
+                evidence.append(_ev(f"{r['product']} days remaining", r["days_remaining"], f"expiry_risks[{i}].days_remaining"))
+            lines.append("Options for your decision: a clearance discount, or front-of-counter placement so they are dispensed first.")
+        else:
+            lines.append("No immediate short-dated batches require emergency discounting.")
+        follow = ["Which products are at highest expiry risk?", "What should I stop reordering?", "What should I stock up on this season?"]
     elif intent == "PRIORITIES":
         recs = build_recommendations(ctx)["recommendations"][:5]
         if recs:
