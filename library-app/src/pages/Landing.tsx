@@ -180,9 +180,6 @@ export default function Landing() {
             </div>
 
             <div className="sky-nav-actions">
-              <button type="button" className="sky-search-btn" aria-label="Search">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="6" /><path d="m16 16 5 5" /></svg>
-              </button>
               <Link to="/signin" className="sky-btn-ghost">Log In</Link>
               <Link to="/signup" className="sky-btn-primary">Get Started</Link>
             </div>
