@@ -16,6 +16,8 @@ import { useInventory } from '../api/useInventory';
 import StatCard from '../components/StatCard';
 import { formatGhc } from '../utils/currency';
 import { useAuth } from '../api/useAuth';
+import type { InventoryItem } from '../api/types';
+import { daysToExpiry, riskBand, type RiskBand, type RiskThresholds } from '../utils/risk';
 
 interface DashboardProps {
   quantityFilter: number;
@@ -26,6 +28,7 @@ interface DashboardProps {
 type RiskLevel = 'Critical' | 'High Risk' | 'Monitor';
 
 interface ActionItem {
+  id: string;
   product: string;
   category: string;
   batch: string;
@@ -37,148 +40,105 @@ interface ActionItem {
   action: string;
 }
 
-const actionItems: ActionItem[] = [
-  {
-    product: 'Amoxicillin 500mg',
-    category: 'Antibiotic',
-    batch: 'AMX2026B12',
-    location: 'Shelf B3',
-    stock: 320,
-    value: 2240,
-    daysLeft: 6,
-    risk: 'Critical',
-    action: 'Prioritise stock for immediate sale',
-  },
-  {
-    product: 'Paracetamol 500mg',
-    category: 'Analgesic',
-    batch: 'PCM2026D09',
-    location: 'Shelf C2',
-    stock: 280,
-    value: 840,
-    daysLeft: 12,
-    risk: 'High Risk',
-    action: 'Review discount window',
-  },
-  {
-    product: 'Insulin Glargine',
-    category: 'Diabetes Care',
-    batch: 'INS2026F04',
-    location: 'Cold Room 2',
-    stock: 95,
-    value: 4725,
-    daysLeft: 18,
-    risk: 'High Risk',
-    action: 'Move to fast-turn allocation',
-  },
-  {
-    product: 'Cefixime Oral Suspension',
-    category: 'Pediatric',
-    batch: 'CEF2026C18',
-    location: 'Shelf A1',
-    stock: 160,
-    value: 1180,
-    daysLeft: 27,
-    risk: 'Monitor',
-    action: 'Quarantine & notify manager',
-  },
-  {
-    product: 'Salbutamol Inhaler',
-    category: 'Respiratory',
-    batch: 'SAL2026E21',
-    location: 'Shelf D4',
-    stock: 210,
-    value: 1260,
-    daysLeft: 31,
-    risk: 'Monitor',
-    action: 'Review discount window',
-  },
-];
+const RISK_FOR_BAND: Partial<Record<RiskBand, RiskLevel>> = {
+  Expired: 'Critical',
+  Critical: 'Critical',
+  'Action Required': 'High Risk',
+  Monitor: 'Monitor',
+};
 
-const fefoQueue = [
-  { rank: 1, batch: 'AMX2026B12', location: 'Shelf B3', units: 320, daysLeft: 6 },
-  { rank: 2, batch: 'PCM2026D09', location: 'Shelf C2', units: 280, daysLeft: 12 },
-  { rank: 3, batch: 'INS2026F04', location: 'Cold Room 2', units: 95, daysLeft: 18 },
-];
+function isOnSale(item: InventoryItem) {
+  return item.status !== 'Disposed' && item.status !== 'Quarantined' && item.status !== 'Pending Return' && item.quantity > 0;
+}
 
-const riskDistribution = [
-  { label: '< 30 Days', value: 58, bar: '#ef4444' },
-  { label: '31 – 60 Days', value: 26, bar: '#f97316' },
-  { label: '61 – 90 Days', value: 12, bar: '#f59e0b' },
-  { label: '> 90 Days', value: 32, bar: '#10b981' },
-];
+/** Everything on the dashboard is derived from the live inventory returned by the server. */
+function buildDashboard(items: InventoryItem[], t: RiskThresholds) {
+  const live = items.filter(item => item.status !== 'Disposed' && item.quantity > 0);
+  const onSale = live.filter(isOnSale);
+  const value = (item: InventoryItem) => (item.quantity || 0) * (item.unitPrice || 0);
+  const bands = new Map(live.map(item => [item.id, riskBand(item, t)]));
 
-const kpis = [
-  {
-    title: 'Total Products',
-    value: '4,250',
-    helper: 'Across 18 active SKUs',
-    tone: 'navy' as const,
-    Icon: Package,
-  },
-  {
-    title: 'Total Stock Value',
-    value: formatGhc(184200),
-    helper: 'Current inventory valuation',
-    tone: 'indigo' as const,
-    Icon: DollarSign,
-  },
-  {
-    title: 'Near-Expiry Products',
-    value: '137',
-    helper: 'Within 60-day risk window',
-    tone: 'monitor' as const,
-    Icon: Clock3,
-  },
-  {
-    title: 'High-Risk Products',
-    value: '32',
-    helper: 'Requires intervention',
-    tone: 'action' as const,
-    Icon: AlertTriangle,
-  },
-  {
-    title: 'Expired Products',
-    value: '8',
-    helper: 'Immediate disposal queue',
-    tone: 'expired' as const,
-    Icon: ShieldAlert,
-  },
-  {
-    title: 'Stock Value at Expiry Risk',
-    value: formatGhc(12450),
-    helper: 'Exposure from expiring stock',
-    tone: 'critical' as const,
-    Icon: TrendingDown,
-  },
-  {
-    title: 'Fast-Moving Products',
-    value: '245',
-    helper: 'High turnover inventory',
-    tone: 'safe' as const,
-    Icon: TrendingUp,
-  },
-  {
-    title: 'Slow-Moving Products',
-    value: '418',
-    helper: 'Needs demand review',
-    tone: 'teal' as const,
-    Icon: TrendingDown,
-  },
-];
+  const actionItems: ActionItem[] = onSale
+    .filter(item => RISK_FOR_BAND[bands.get(item.id) ?? 'Safe'])
+    .map(item => ({
+      id: item.id,
+      product: item.name,
+      category: item.category,
+      batch: item.batchNo,
+      location: item.location || '—',
+      stock: item.quantity,
+      value: value(item),
+      daysLeft: daysToExpiry(item),
+      risk: RISK_FOR_BAND[bands.get(item.id) ?? 'Safe'] as RiskLevel,
+      action: item.recommendedAction || 'Review stock rotation',
+    }))
+    .sort((a, b) => a.daysLeft - b.daysLeft);
+
+  const fefoQueue = onSale
+    .filter(item => daysToExpiry(item) > 0)
+    .sort((a, b) => daysToExpiry(a) - daysToExpiry(b))
+    .slice(0, 3)
+    .map((item, index) => ({
+      rank: index + 1,
+      id: item.id,
+      batch: `${item.batchNo} · ${item.name}`,
+      location: item.location || '—',
+      units: item.quantity,
+      daysLeft: daysToExpiry(item),
+    }));
+
+  const horizon = [
+    { label: `≤ ${t.actionDays} Days`, test: (d: number) => d <= t.actionDays, bar: '#ef4444' },
+    { label: `${t.actionDays + 1} – ${t.monitorDays} Days`, test: (d: number) => d > t.actionDays && d <= t.monitorDays, bar: '#f97316' },
+    { label: `${t.monitorDays + 1} – ${t.safeDays} Days`, test: (d: number) => d > t.monitorDays && d <= t.safeDays, bar: '#f59e0b' },
+    { label: `> ${t.safeDays} Days`, test: (d: number) => d > t.safeDays, bar: '#10b981' },
+  ];
+  const totalValue = live.reduce((sum, item) => sum + value(item), 0);
+  const totalUnits = live.reduce((sum, item) => sum + item.quantity, 0);
+  const riskDistribution = horizon.map(({ label, test, bar }) => {
+    const matching = live.filter(item => test(daysToExpiry(item)));
+    const share = totalValue > 0
+      ? matching.reduce((sum, item) => sum + value(item), 0) / totalValue
+      : totalUnits > 0 ? matching.reduce((sum, item) => sum + item.quantity, 0) / totalUnits : 0;
+    return { label, value: Math.round(share * 100), bar };
+  });
+
+  const count = (band: RiskBand | RiskBand[]) => {
+    const wanted = Array.isArray(band) ? band : [band];
+    return live.filter(item => wanted.includes(bands.get(item.id) ?? 'Safe')).length;
+  };
+  const products = new Set(live.map(item => item.productId ?? item.name));
+  const atRiskValue = live
+    .filter(item => daysToExpiry(item) <= t.actionDays)
+    .reduce((sum, item) => sum + value(item), 0);
+
+  const kpis = [
+    { title: 'Total Products', value: products.size.toLocaleString(), helper: `${live.length.toLocaleString()} batches in stock`, tone: 'navy' as const, Icon: Package },
+    { title: 'Total Stock Value', value: formatGhc(totalValue), helper: 'Current inventory valuation', tone: 'indigo' as const, Icon: DollarSign },
+    { title: 'Near-Expiry Products', value: count(['Critical', 'Action Required', 'Monitor']).toLocaleString(), helper: `Within ${t.monitorDays}-day risk window`, tone: 'monitor' as const, Icon: Clock3 },
+    { title: 'High-Risk Products', value: count(['Critical', 'Action Required']).toLocaleString(), helper: 'Requires intervention', tone: 'action' as const, Icon: AlertTriangle },
+    { title: 'Expired Products', value: count('Expired').toLocaleString(), helper: 'Immediate disposal queue', tone: 'expired' as const, Icon: ShieldAlert },
+    { title: 'Stock Value at Expiry Risk', value: formatGhc(atRiskValue), helper: `Expired or within ${t.actionDays} days`, tone: 'critical' as const, Icon: TrendingDown },
+    { title: 'Fast-Moving Products', value: live.filter(item => item.velocity === 'Fast').length.toLocaleString(), helper: 'High turnover inventory', tone: 'safe' as const, Icon: TrendingUp },
+    { title: 'Slow-Moving Products', value: live.filter(item => item.velocity === 'Slow' || item.velocity === 'Dead').length.toLocaleString(), helper: 'Needs demand review', tone: 'teal' as const, Icon: TrendingDown },
+  ];
+
+  return { actionItems, fefoQueue, riskDistribution, kpis };
+}
 
 export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: DashboardProps) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { items } = useInventory();
+  const { items, thresholds } = useInventory();
+  const { actionItems, fefoQueue, riskDistribution, kpis } = useMemo(() => buildDashboard(items || [], thresholds), [items, thresholds]);
   const [spotlightIndex, setSpotlightIndex] = useState(0);
   const [spotlightPaused, setSpotlightPaused] = useState(false);
   const spotlightItems = useMemo(() => (items || [])
-    .filter(item => item.status !== 'Quarantined')
+    .filter(item => isOnSale(item))
     .slice()
     .sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime()), [items]);
   const spotlightItem = spotlightItems.length ? spotlightItems[spotlightIndex % spotlightItems.length] : undefined;
-  const spotlightDaysLeft = spotlightItem ? Math.floor((new Date(spotlightItem.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 0;
+  const spotlightDaysLeft = spotlightItem ? daysToExpiry(spotlightItem) : 0;
 
   useEffect(() => {
     if (spotlightPaused || spotlightItems.length < 2) return;
@@ -202,7 +162,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
       const matchesExpiry = item.daysLeft <= expiryLimit;
       return matchesSearch && matchesQuantity && matchesExpiry;
     });
-  }, [searchTerm, quantityFilter, expiryFilter]);
+  }, [actionItems, searchTerm, quantityFilter, expiryFilter]);
 
   const queue = useMemo(() => {
     const normalizedTerm = (searchTerm || '').trim().toLowerCase();
@@ -210,9 +170,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
       const searchableText = `${item.batch} ${item.location}`.toLowerCase();
       return !normalizedTerm || searchableText.includes(normalizedTerm);
     });
-  }, [searchTerm]);
-
-  const totalRiskValue = riskDistribution.reduce((sum, item) => sum + item.value, 0);
+  }, [fefoQueue, searchTerm]);
 
   return (
     <div className="page-body dashboard-page">
@@ -245,7 +203,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
               <p>{spotlightItem.category}</p>
               <div className="product-spotlight-stats">
                 <span className="product-stat-pill"><Package size={15} /><strong>{spotlightItem.quantity.toLocaleString()}</strong> in stock</span>
-                <span className={`product-stat-pill ${spotlightDaysLeft <= 30 ? 'is-at-risk' : ''}`}><Clock3 size={15} /><strong>{spotlightDaysLeft < 0 ? `${Math.abs(spotlightDaysLeft)}d overdue` : `${spotlightDaysLeft} days`}</strong> to expiry</span>
+                <span className={`product-stat-pill ${spotlightDaysLeft <= thresholds.actionDays ? 'is-at-risk' : ''}`}><Clock3 size={15} /><strong>{spotlightDaysLeft < 0 ? `${Math.abs(spotlightDaysLeft)}d overdue` : `${spotlightDaysLeft} days`}</strong> to expiry</span>
               </div>
             </div>
             <Link className="product-spotlight-view" to={`/inventory/${spotlightItem.id}`} aria-label={`View ${spotlightItem.name}`} title="View product details"><ArrowUpRight size={20} /></Link>
@@ -280,7 +238,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
                 </thead>
                 <tbody>
                   {filteredRows.map(item => (
-                    <tr key={`${item.batch}-${item.product}`}>
+                    <tr key={item.id}>
                       <td>
                         <div className="dashboard-cell-primary" title={item.product}>{item.product}</div>
                         <div className="dashboard-cell-muted">{item.category}</div>
@@ -317,12 +275,9 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
                       </td>
 
                       <td>
-                        <button
-                          type="button"
-                          className="row-action-button"
-                        >
-                          Execute
-                        </button>
+                        <Link to={`/inventory/${item.id}`} className="row-action-button">
+                          Open
+                        </Link>
                       </td>
                     </tr>
                   ))}
@@ -341,7 +296,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
               {queue.map(item => (
-                <div key={item.batch} className="dashboard-fefo-item">
+                <div key={item.id} className="dashboard-fefo-item">
                   <div className="dashboard-fefo-item-top">
                     <div className="dashboard-fefo-rank">#{item.rank}</div>
                     <span className="dashboard-dispatch-badge">
@@ -366,7 +321,7 @@ export default function Dashboard({ searchTerm, quantityFilter, expiryFilter }: 
             <div style={{ marginTop: '1.25rem' }}>
               <div className="dashboard-panel-heading dashboard-risk-heading">
                 <p className="dashboard-panel-title">Expiry Risk Horizon</p>
-                {isAdmin && <small className="dashboard-panel-description">{totalRiskValue}% inventory value</small>}
+                <small className="dashboard-panel-description">{isAdmin ? 'Share of stock value' : 'Share of stock'}</small>
               </div>
 
               {riskDistribution.map(item => (

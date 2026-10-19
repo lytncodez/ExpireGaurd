@@ -9,15 +9,12 @@ from __future__ import annotations
 
 import math
 import uuid
-from dataclasses import dataclass
-from datetime import date, timedelta
-from decimal import Decimal
-from typing import Any
+from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Batch, BatchStatus, Company, Product, Sale, WorkflowStatus
+from app.models import Batch, Product, Sale, WorkflowStatus
 from app.schemas.ai import SeasonalProductRecommendation, SeasonalRecommendationCard
 from app.services.auth_service import get_company
 from app.utils.dates import start_of_local_day_utc, today_in_tz

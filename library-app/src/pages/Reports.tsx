@@ -6,15 +6,15 @@ import { useInventory } from '../api/useInventory';
 import StatCard from '../components/StatCard';
 import { formatGhc } from '../utils/currency';
 import { Button } from '../components/ui/Button';
+import { daysToExpiry, riskBand } from '../utils/risk';
 
 type Risk = 'Safe' | 'Monitor' | 'Action' | 'Critical' | 'Expired';
 const riskColors: Record<Risk, string> = { Safe: '#16a36a', Monitor: '#e9a423', Action: '#f17b32', Critical: '#df4545', Expired: '#8290a2' };
 const riskLabel: Record<Risk, string> = { Safe: 'Safe', Monitor: 'Monitor', Action: 'Action Required', Critical: 'Critical', Expired: 'Expired' };
-const day = 86400000;
 type ReviewSelection = { kind: 'supplier' | 'velocity' | 'category' | 'risk'; name: string };
 
 export default function Reports() {
-  const { items: inventoryItems = [] } = useInventory();
+  const { items: inventoryItems = [], thresholds } = useInventory();
   const items = inventoryItems.filter(item => item.status !== 'Disposed');
   const now = Date.now();
   const [selectedRiskFilter, setSelectedRiskFilter] = useState<'All' | Risk>('All');
@@ -26,10 +26,11 @@ export default function Reports() {
   const [reviewSelection, setReviewSelection] = useState<ReviewSelection | null>(null);
 
   const data = useMemo(() => items.map(item => {
-    const diffDays = Math.floor((new Date(item.expiryDate).getTime() - now) / day);
-    const riskKey: Risk = diffDays < 0 ? 'Expired' : diffDays <= 7 ? 'Critical' : diffDays <= 30 ? 'Action' : diffDays <= 60 ? 'Monitor' : 'Safe';
+    const diffDays = daysToExpiry(item, now);
+    const band = riskBand(item, thresholds);
+    const riskKey: Risk = band === 'Action Required' ? 'Action' : band;
     return { ...item, diffDays, riskKey, totalValue: (item.quantity || 0) * (item.unitCostGhs ?? item.unitPrice ?? 0) };
-  }), [items, now]);
+  }), [items, now, thresholds]);
 
   const filtered = useMemo(() => data.filter(item => {
     if (item.riskKey === 'Safe') return false;

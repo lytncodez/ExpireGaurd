@@ -10,7 +10,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models import Alert, AlertSeverity, AlertType, Batch, Insight, Notification, NotificationStatus, Product
+from app.models import (
+    Alert,
+    AlertSeverity,
+    AlertType,
+    Batch,
+    Insight,
+    Notification,
+    NotificationChannel,
+    NotificationStatus,
+    Product,
+)
 from app.schemas.alerts import AlertRead
 from app.schemas.analytics import ExpiryRiskItem, NamedAmount
 from app.schemas.dashboard import (
@@ -111,7 +121,7 @@ async def alerts(db: AsyncSession, company_id: uuid.UUID) -> DashboardAlerts:
     notif = dict(
         (await db.execute(
             select(Notification.status, func.count())
-            .where(Notification.company_id == company_id)
+            .where(Notification.company_id == company_id, Notification.channel == NotificationChannel.SMS)
             .group_by(Notification.status)
         )).all()
     )

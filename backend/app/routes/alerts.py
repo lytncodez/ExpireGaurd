@@ -7,7 +7,7 @@ from app.dependencies.auth import AdminUser, StaffUser
 from app.dependencies.database import DbSession
 from app.models import AlertSeverity, AlertType
 from app.schemas import Page
-from app.schemas.alerts import AlertRead, TestSMSRequest
+from app.schemas.alerts import AlertRead, TestEmailRequest, TestSMSRequest
 from app.schemas.notifications import NotificationRead
 from app.services import alert_service, notification_service
 from app.utils.helpers import client_ip
@@ -63,6 +63,17 @@ async def expiring_soon_alerts(
 async def test_sms(data: TestSMSRequest, user: AdminUser, db: DbSession) -> NotificationRead:
     return NotificationRead.model_validate(
         await notification_service.send_test_sms(db, user, data.phone_number, data.message)
+    )
+
+
+@router.post("/test-email", response_model=NotificationRead, summary="Send a test email",
+             description="Sends through the configured email setup (EMAIL_MODE mock or live SMTP, e.g. Gmail) and "
+                         "records a notification. A delivery failure is returned as status FAILED with error_message, "
+                         "not as an HTTP error. ADMIN.",
+             responses=error_responses(401, 403, 422))
+async def test_email(data: TestEmailRequest, user: AdminUser, db: DbSession) -> NotificationRead:
+    return NotificationRead.model_validate(
+        await notification_service.send_test_email(db, user, str(data.email), data.message)
     )
 
 

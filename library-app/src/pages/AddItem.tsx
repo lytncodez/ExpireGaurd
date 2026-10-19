@@ -3,6 +3,69 @@ import { useNavigate } from 'react-router-dom';
 import { useInventory } from '../api/useInventory';
 import CurrencyInput from '../components/CurrencyInput';
 import { useAuth } from '../api/useAuth';
+import { api, errorMessage } from '../api/client';
+
+interface ParsedScan {
+  raw: string;
+  isGs1: boolean;
+  gtin: string | null;
+  barcode: string | null;
+  batchNumber: string | null;
+  expiryDate: string | null;
+  productionDate: string | null;
+  warnings: string[];
+  product: { name: string; category_name: string | null; cost_price: string | null; selling_price: string } | null;
+  existingBatchId: string | null;
+}
+
+interface ImportRowError { row: number | null; field: string | null; message: string; error_type: string }
+
+interface ImportPreview {
+  valid: boolean;
+  message: string | null;
+  total_rows: number;
+  failed_rows: number;
+  duplicate_rows: number;
+  products_to_create: number;
+  products_to_update: number;
+  batches_to_create: number;
+  risk_bands: Record<string, number>;
+  errors: ImportRowError[];
+}
+
+interface ImportResult { status: string; batches_created: number; failed_rows: number; duplicate_rows: number; alerts_generated: number }
+
+/** GS1 date (YYMMDD) for a day offset, so the sample codes always demonstrate the same risk band. */
+function gs1Date(daysFromToday: number) {
+  const d = new Date(Date.now() + daysFromToday * 24 * 60 * 60 * 1000);
+  return `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Sample packs for trying the scanner without hardware. Product details are only used if the GTIN is not in
+// your catalogue yet; batch and expiry always come from the decoded code.
+const SAMPLE_SCANS = {
+  amox: { gtin: '00345678901281', days: 25, batch: 'GS1-AC625-9921', name: 'Amoxicillin Clavulanate 625mg', category: 'Antibiotics', price: 32.0, supplier: 'Aurobindo Pharma', location: 'Aisle B2 - Shelf 4', quantity: 240 },
+  art: { gtin: '05012345678900', days: 6, batch: 'ACT-5541-GH', name: 'Artemether / Lumefantrine 20/120mg (Coartem)', category: 'Antimalarials', price: 22.5, supplier: 'Novartis Ghana Ltd.', location: 'Aisle A1 - Fast Track Bay', quantity: 500 },
+  para: { gtin: '06180000012341', days: 180, batch: 'PAR-3312-EX', name: 'Paracetamol Extra 500mg/65mg', category: 'Analgesics', price: 7.5, supplier: 'Ernest Chemists Ltd.', location: 'Warehouse Bay W1', quantity: 850 },
+} as const;
+
+const SAMPLE_CSV_ROWS: [string, string, string, number, number, number, string, string][] = [
+  ['Ciprofloxacin 500mg', 'Antibiotics', 'CIP-4401', 14, 300, 28.0, 'Kinapharma Ltd.', 'Aisle B1'],
+  ['Azithromycin 500mg 3s', 'Antibiotics', 'AZI-2210', 45, 180, 38.5, 'Tobbinco Pharmaceuticals', 'Aisle B3'],
+  ['Diclofenac Sodium 50mg', 'Analgesics', 'DIC-9908', 85, 450, 12.0, 'Ernest Chemists Ltd.', 'Aisle A2'],
+  ['Oral Rehydration Salts (ORS) 10s', 'First Aid', 'ORS-6612', 210, 600, 5.5, 'Universal Hospitals Group', 'Aisle C1'],
+  ['Lisinopril 10mg Tablets', 'Cardiovascular', 'LIS-8841', 4, 220, 42.0, 'PharmaCorp Inc.', 'Cold Storage C1'],
+  ['Cetirizine 10mg Tablets', 'Antihistamines', 'CET-1123', -2, 350, 8.5, 'MediSupply Co.', 'Quarantine Bay Q1'],
+];
+
+function sampleCsvFile(): File {
+  const iso = (days: number) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const lines = ['product_name,category,batch_number,expiry_date,quantity,unit_cost,supplier,storage_location'];
+  for (const [name, category, batch, days, qty, cost, supplier, location] of SAMPLE_CSV_ROWS) {
+    lines.push([name, category, batch, iso(days), qty, cost.toFixed(2), supplier, location].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+  }
+  return new File([lines.join('\n') + '\n'], 'sample_stock_manifest.csv', { type: 'text/csv' });
+}
 
 type EntryPath = 'choice' | 'scan' | 'manual' | 'import';
 
@@ -10,7 +73,7 @@ export default function AddItem() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { addItem } = useInventory();
+  const { addItem, refresh } = useInventory();
 
   // Active path state
   const [activePath, setActivePath] = useState<EntryPath>('choice');
@@ -26,11 +89,14 @@ export default function AddItem() {
   const [supplier, setSupplier] = useState('');
   const [location, setLocation] = useState('');
   const [status, setStatus] = useState<'In Stock' | 'Low Stock' | 'Quarantined' | 'Pending Return'>('In Stock');
+  const [barcode, setBarcode] = useState('');
+  const [saving, setSaving] = useState(false);
 
   // Scanner State
   const [isScanning, setIsScanning] = useState(false);
   const [scanDetected, setScanDetected] = useState(false);
   const [scanResultFeedback, setScanResultFeedback] = useState<string | null>(null);
+  const [scanInput, setScanInput] = useState('');
 
   // CSV Import State
   const [dragActive, setDragActive] = useState(false);
@@ -38,81 +104,83 @@ export default function AddItem() {
   const [importFileName, setImportFileName] = useState<string | null>(null);
   const [importRowCount, setImportRowCount] = useState<number>(0);
   const [importSuccess, setImportSuccess] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [committing, setCommitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Manual Form Submission
-  const handleManualSubmit = (e: FormEvent) => {
+  // Manual Form Submission (also used after a scan)
+  const handleManualSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!name || !category || !expiryDate || quantity === '' || unitPrice === '') return;
+    if (!name || !category || !expiryDate || quantity === '' || unitPrice === '' || saving) return;
 
-    addItem({
+    setSaving(true);
+    const created = await addItem({
       name,
       category,
-      batchNo: batchNo || `BATCH-${Math.floor(1000 + Math.random() * 9000)}`,
+      batchNo, // empty -> the server allocates a unique batch number
       quantity: Number(quantity),
       unitPrice: isAdmin ? Number(unitPrice) : 0,
       unitCostGhs: isAdmin ? Number(unitPrice) : undefined,
       sellingPriceGhs: isAdmin ? undefined : Number(unitPrice),
       expiryDate,
-      ...(isAdmin ? { supplier: supplier || 'PharmaCorp Direct' } : {}),
-      location: location || 'Aisle A1 - Shelf 1',
+      manufacturingDate: mfgDate || undefined,
+      ...(isAdmin ? { supplier: supplier || undefined } : {}),
+      location: location || undefined,
       status,
+      barcode: barcode || undefined,
     });
-
-    navigate('/inventory');
+    setSaving(false);
+    if (created) navigate(`/inventory/${created.id}`);
   };
 
-  // Sample barcode scanner triggers (simulating real GS1/DataMatrix pharma codes)
-  const handleSimulateScan = (preset: 'amox' | 'art' | 'para') => {
+  // Decode a scan on the server (GS1 DataMatrix / GS1-128 carry GTIN, batch and expiry; plain barcodes
+  // only identify the product) and fill in whatever the code really contains.
+  const decodeScan = async (code: string, fallback?: (typeof SAMPLE_SCANS)[keyof typeof SAMPLE_SCANS]) => {
+    if (!code.trim()) return;
     setIsScanning(true);
     setScanDetected(false);
-    setScanResultFeedback('Acquiring camera feed & reading GS1-128 DataMatrix...');
-
-    setTimeout(() => {
-      setIsScanning(false);
-      setScanDetected(true);
-
-      if (preset === 'amox') {
-        setName('Amoxicillin Clavulanate 625mg');
-        setCategory('Antibiotics');
-        setBatchNo('GS1-AC625-9921');
-        setQuantity(240);
-        setUnitPrice(32.00);
-        setMfgDate('2024-02-10');
-        // Expiring in ~25 days (Action Required)
-        const exp = new Date(Date.now() + 25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        setExpiryDate(exp);
-        setSupplier('Aurobindo Pharma');
-        setLocation('Aisle B2 - Shelf 4');
-        setScanResultFeedback('Barcode decoded: (01)00345678901285(17)261025(10)GS1-AC625-9921');
-      } else if (preset === 'art') {
-        setName('Artemether / Lumefantrine 20/120mg (Coartem)');
-        setCategory('Antimalarials');
-        setBatchNo('ACT-5541-GH');
-        setQuantity(500);
-        setUnitPrice(22.50);
-        setMfgDate('2024-03-01');
-        // Expiring in 6 days (Critical)
-        const exp = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        setExpiryDate(exp);
-        setSupplier('Novartis Ghana Ltd.');
-        setLocation('Aisle A1 - Fast Track Bay');
-        setScanResultFeedback('Barcode decoded: (01)05012345678901(17)260930(10)ACT-5541-GH');
-      } else {
-        setName('Paracetamol Extra 500mg/65mg');
-        setCategory('Analgesics');
-        setBatchNo('PAR-3312-EX');
-        setQuantity(850);
-        setUnitPrice(7.50);
-        setMfgDate('2024-04-12');
-        // Expiring in 180 days (Safe)
-        const exp = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        setExpiryDate(exp);
-        setSupplier('Ernest Chemists Ltd.');
-        setLocation('Warehouse Bay W1');
-        setScanResultFeedback('Barcode decoded: (01)06180000012345(17)270325(10)PAR-3312-EX');
+    setScanResultFeedback('Decoding barcode...');
+    try {
+      const scan = await api<ParsedScan>('/barcode/parse', { method: 'POST', body: { code } });
+      setBarcode(scan.barcode ?? '');
+      if (scan.batchNumber) setBatchNo(scan.batchNumber);
+      if (scan.expiryDate) setExpiryDate(scan.expiryDate);
+      if (scan.productionDate) setMfgDate(scan.productionDate);
+      if (scan.product) {
+        setName(scan.product.name);
+        setCategory(scan.product.category_name ?? '');
+        const price = isAdmin ? scan.product.cost_price : scan.product.selling_price;
+        if (price !== null) setUnitPrice(Number(price));
+      } else if (fallback) {
+        setName(fallback.name);
+        setCategory(fallback.category);
+        setUnitPrice(fallback.price);
+        setSupplier(fallback.supplier);
+        setLocation(fallback.location);
+        setQuantity(fallback.quantity);
       }
-    }, 1200);
+      const parts = [
+        scan.isGs1 ? 'GS1 code decoded' : 'Product barcode read (no batch or expiry in this code)',
+        scan.product ? `matched ${scan.product.name}` : 'new product: check the details',
+        ...(scan.existingBatchId ? ['this batch is already in stock'] : []),
+        ...scan.warnings,
+      ];
+      setScanResultFeedback(parts.join(' · '));
+      setScanDetected(true);
+    } catch (err) {
+      setScanResultFeedback(errorMessage(err));
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleSimulateScan = (preset: keyof typeof SAMPLE_SCANS) => {
+    const sample = SAMPLE_SCANS[preset];
+    const code = `(01)${sample.gtin}(17)${gs1Date(sample.days)}(10)${sample.batch}`;
+    setScanInput(code);
+    void decodeScan(code, sample);
   };
 
   // CSV Drag and Drop Simulation
@@ -131,60 +199,80 @@ export default function AddItem() {
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      startCsvImportSimulation(e.dataTransfer.files[0].name);
+      void startImportPreview(e.dataTransfer.files[0]);
     }
   };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      startCsvImportSimulation(e.target.files[0].name);
+      void startImportPreview(e.target.files[0]);
+    }
+    e.target.value = '';
+  };
+
+  /** Dry run on the server: validates the file and reports what would be imported. Nothing is saved yet. */
+  const startImportPreview = async (file: File) => {
+    const lower = file.name.toLowerCase();
+    if (!lower.endsWith('.csv') && !lower.endsWith('.xlsx')) {
+      setImportError('Choose a .csv or .xlsx file (older .xls workbooks need saving as .xlsx first).');
+      return;
+    }
+    setImportFile(file);
+    setImportFileName(file.name);
+    setImportPreview(null);
+    setImportError(null);
+    setImportSuccess(false);
+    setImportStep(1);
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const preview = await api<ImportPreview>('/imports/preview', { method: 'POST', form });
+      setImportPreview(preview);
+      setImportRowCount(preview.batches_to_create);
+      setImportStep(4);
+      setImportSuccess(preview.valid);
+      if (!preview.valid) setImportError(preview.message || 'Nothing in this file can be imported.');
+    } catch (err) {
+      setImportStep(0);
+      setImportError(errorMessage(err));
     }
   };
 
-  const startCsvImportSimulation = (filename: string) => {
-    setImportFileName(filename);
-    setImportStep(1);
-    setImportSuccess(false);
-
-    // Step 1: Validating schema
-    setTimeout(() => {
-      setImportStep(2);
-      // Step 2: Checking batch duplicates
-      setTimeout(() => {
-        setImportStep(3);
-        // Step 3: Calculating risk bands
-        setTimeout(() => {
-          setImportStep(4);
-          setImportRowCount(6);
-          setImportSuccess(true);
-        }, 600);
-      }, 700);
-    }, 600);
+  const commitCsvImport = async () => {
+    if (!importFile || committing) return;
+    setCommitting(true);
+    setImportError(null);
+    const form = new FormData();
+    form.append('file', importFile);
+    const endpoint = importFile.name.toLowerCase().endsWith('.xlsx') ? '/imports/excel' : '/imports/csv';
+    try {
+      const result = await api<ImportResult>(endpoint, { method: 'POST', form });
+      await refresh();
+      if (result.status === 'FAILED') {
+        setImportError('The import failed and nothing was saved. Check the file and try again.');
+      } else {
+        navigate('/inventory');
+      }
+    } catch (err) {
+      setImportError(errorMessage(err));
+    } finally {
+      setCommitting(false);
+    }
   };
 
-  const commitCsvImport = () => {
-    const dayMs = 24 * 60 * 60 * 1000;
-    const batchList = [
-      { name: 'Ciprofloxacin 500mg', category: 'Antibiotics', batchNo: 'CIP-4401', quantity: 300, unitPrice: 28.00, expiryDate: new Date(Date.now() + 14 * dayMs).toISOString(), supplier: 'Kinapharma Ltd.', location: 'Aisle B1' },
-      { name: 'Azithromycin 500mg 3s', category: 'Antibiotics', batchNo: 'AZI-2210', quantity: 180, unitPrice: 38.50, expiryDate: new Date(Date.now() + 45 * dayMs).toISOString(), supplier: 'Tobbinco Pharmaceuticals', location: 'Aisle B3' },
-      { name: 'Diclofenac Sodium 50mg', category: 'Analgesics', batchNo: 'DIC-9908', quantity: 450, unitPrice: 12.00, expiryDate: new Date(Date.now() + 85 * dayMs).toISOString(), supplier: 'Ernest Chemists Ltd.', location: 'Aisle A2' },
-      { name: 'Oral Rehydration Salts (ORS) 10s', category: 'First Aid', batchNo: 'ORS-6612', quantity: 600, unitPrice: 5.50, expiryDate: new Date(Date.now() + 210 * dayMs).toISOString(), supplier: 'Universal Hospitals Group', location: 'Aisle C1' },
-      { name: 'Lisinopril 10mg Tablets', category: 'Cardiovascular', batchNo: 'LIS-8841', quantity: 220, unitPrice: 42.00, expiryDate: new Date(Date.now() + 4 * dayMs).toISOString(), supplier: 'PharmaCorp Inc.', location: 'Cold Storage C1' },
-      { name: 'Cetirizine 10mg Tablets', category: 'Antihistamines', batchNo: 'CET-1123', quantity: 350, unitPrice: 8.50, expiryDate: new Date(Date.now() - 2 * dayMs).toISOString(), supplier: 'MediSupply Co.', location: 'Quarantine Bay Q1' },
-    ];
-
-    batchList.forEach(b => {
-      addItem({
-        ...b,
-        unitPrice: isAdmin ? b.unitPrice : 0,
-        unitCostGhs: isAdmin ? b.unitPrice : undefined,
-        sellingPriceGhs: isAdmin ? undefined : b.unitPrice,
-        supplier: isAdmin ? b.supplier : undefined,
-        status: b.quantity < 200 ? 'Low Stock' : 'In Stock',
-      });
-    });
-
-    navigate('/inventory');
+  const downloadTemplate = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const csv = await api<string>('/imports/template.csv');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'expireguard_import_template.csv';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setImportError(errorMessage(err));
+    }
   };
 
   return (
@@ -272,7 +360,7 @@ export default function AddItem() {
                   Scan QR / Barcode
                 </h3>
                 <p style={{ fontSize: '0.86rem', color: '#64748B', lineHeight: 1.5, marginBottom: '1.25rem' }}>
-                  Point your device camera at a 2D DataMatrix or 1D barcode. Auto-populates batch, expiry, and product fields instantly.
+                  Scan with a barcode scanner. GS1 DataMatrix codes fill in batch and expiry; known products fill in their details.
                 </p>
               </div>
 
@@ -393,7 +481,7 @@ export default function AddItem() {
               <line x1="12" y1="8" x2="12.01" y2="8" />
             </svg>
             <span style={{ fontSize: '0.84rem', color: '#475569' }}>
-              <strong>Tip:</strong> If you don't have barcode hardware or a camera, manual entry is always accessible as a complete, zero-friction fallback.
+              <strong>Tip:</strong> If you don't have a barcode scanner, manual entry is always accessible as a complete, zero-friction fallback.
             </span>
           </div>
         </div>
@@ -406,10 +494,10 @@ export default function AddItem() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <div>
                 <h2 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#1E3A4C' }}>
-                  Camera Barcode &amp; QR Scanner
+                  Barcode Scanner
                 </h2>
                 <p style={{ fontSize: '0.85rem', color: '#64748B' }}>
-                  Align the medicine packaging barcode within the viewfinder to read GS1 DataMatrix identifiers.
+                  Use a USB or Bluetooth barcode scanner (it types into the box below), or paste a code. GS1 DataMatrix codes fill in batch and expiry automatically.
                 </p>
               </div>
 
@@ -472,10 +560,29 @@ export default function AddItem() {
               )}
             </div>
 
+            {/* Scanner input: USB/Bluetooth scanners type the code and press Enter */}
+            <form
+              onSubmit={e => { e.preventDefault(); void decodeScan(scanInput); }}
+              style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem', flexWrap: 'wrap' }}
+            >
+              <input
+                type="text"
+                value={scanInput}
+                onChange={e => setScanInput(e.target.value)}
+                placeholder="Scan with a barcode scanner, or paste a code e.g. (01)…(17)…(10)…"
+                aria-label="Barcode"
+                autoFocus
+                style={{ flex: '1 1 320px', padding: '0.6rem 0.8rem', borderRadius: '8px', border: '1px solid #CBD5E1', fontFamily: 'monospace', fontSize: '0.85rem' }}
+              />
+              <button type="submit" className="btn-primary" disabled={isScanning || !scanInput.trim()} style={{ padding: '0.55rem 1rem', fontSize: '0.85rem' }}>
+                {isScanning ? 'Decoding...' : 'Decode'}
+              </button>
+            </form>
+
             {/* Quick-Scan Simulation Presets for Testing */}
             <div style={{ background: '#F8FAFC', padding: '1rem', borderRadius: '12px', border: '1px solid #E2E8F0', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E3A4C', marginBottom: '0.6rem' }}>
-                Test Scanner with Sample Pharmaceutical Codes:
+                No scanner? Try sample GS1 codes (decoded by the server):
               </div>
               <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
                 <button
@@ -613,9 +720,10 @@ export default function AddItem() {
                     <button
                       type="submit"
                       className="btn-primary"
+                      disabled={saving}
                       style={{ padding: '0.6rem 1.5rem', fontSize: '0.88rem', background: '#3B3593' }}
                     >
-                      Confirm &amp; Add to Inventory
+                      {saving ? 'Saving...' : 'Confirm & Add to Inventory'}
                     </button>
                   </div>
                 </div>
@@ -773,9 +881,10 @@ export default function AddItem() {
                 <button
                   type="submit"
                   className="btn-primary"
+                  disabled={saving}
                   style={{ padding: '0.65rem 1.5rem', fontSize: '0.88rem', background: '#3B3593' }}
                 >
-                  Save Item to Inventory
+                  {saving ? 'Saving...' : 'Save Item to Inventory'}
                 </button>
               </div>
             </form>
@@ -812,7 +921,7 @@ export default function AddItem() {
               type="file"
               ref={fileInputRef}
               onChange={handleFileInputChange}
-              accept=".csv,.xlsx,.xls"
+              accept=".csv,.xlsx"
               style={{ display: 'none' }}
             />
 
@@ -845,11 +954,11 @@ export default function AddItem() {
                 {importFileName ? `Selected: ${importFileName}` : 'Drag & drop your CSV or Excel file here'}
               </h3>
               <p style={{ fontSize: '0.84rem', color: '#64748B', marginBottom: '0.75rem' }}>
-                or click to browse your computer (.csv, .xlsx up to 10MB)
+                or click to browse your computer (.csv or .xlsx, up to 10MB)
               </p>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: '#3B3593', fontSize: '0.82rem', fontWeight: 600 }}>
-                <span>Download Sample Template (.CSV)</span>
-              </div>
+              <button type="button" onClick={downloadTemplate} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: '#3B3593', fontSize: '0.82rem', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                Download Sample Template (.CSV)
+              </button>
             </div>
 
             {/* File Requirements Checklist */}
@@ -868,7 +977,7 @@ export default function AddItem() {
                   <span style={{ color: '#10B981', fontWeight: 800 }}>✓</span> Required: Quantity in Stock (integer)
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <span style={{ color: '#10B981', fontWeight: 800 }}>✓</span> Optional: Unit Price, Supplier, Location
+                  <span style={{ color: '#10B981', fontWeight: 800 }}>✓</span> Optional: SKU, Barcode, Category, Unit Cost, Selling Price, Supplier, Storage Location
                 </div>
               </div>
             </div>
@@ -907,7 +1016,7 @@ export default function AddItem() {
                       </span>
                     </div>
                     <span style={{ fontSize: '0.75rem', color: importStep > 2 ? '#15803D' : (importStep === 2 ? '#3B3593' : '#94A3B8'), fontWeight: 700 }}>
-                      {importStep > 2 ? '0 Collisions' : (importStep === 2 ? 'Scanning...' : 'Pending')}
+                      {importStep > 2 ? `${importPreview?.duplicate_rows ?? 0} duplicate${importPreview?.duplicate_rows === 1 ? '' : 's'}` : (importStep === 2 ? 'Scanning...' : 'Pending')}
                     </span>
                   </div>
 
@@ -944,6 +1053,21 @@ export default function AddItem() {
               </div>
             )}
 
+            {/* Problems found by the server */}
+            {(importError || (importPreview && importPreview.errors.length > 0)) && (
+              <div role="alert" style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '12px', padding: '1rem 1.25rem', marginBottom: '1.25rem', fontSize: '0.82rem', color: '#991B1B' }}>
+                {importError && <div style={{ fontWeight: 700, marginBottom: importPreview?.errors.length ? '0.5rem' : 0 }}>{importError}</div>}
+                {importPreview && importPreview.errors.length > 0 && (
+                  <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+                    {importPreview.errors.slice(0, 8).map((err, i) => (
+                      <li key={i}>{err.row ? `Row ${err.row}: ` : ''}{err.message}</li>
+                    ))}
+                    {importPreview.errors.length > 8 && <li>…and {importPreview.errors.length - 8} more</li>}
+                  </ul>
+                )}
+              </div>
+            )}
+
             {/* Success Confirmation & Commit */}
             {importSuccess && (
               <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '12px', padding: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
@@ -955,21 +1079,24 @@ export default function AddItem() {
                   </div>
                   <div>
                     <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#065F46' }}>
-                      Ready to Ingest {importRowCount} Validated Pharmaceutical Batches
+                      Ready to import {importRowCount} batch{importRowCount === 1 ? '' : 'es'}
                     </div>
                     <div style={{ fontSize: '0.78rem', color: '#047857' }}>
-                      All items passed regulatory and expiration integrity checks.
+                      {importPreview
+                        ? `${importPreview.products_to_create} new product${importPreview.products_to_create === 1 ? '' : 's'} · ${Object.entries(importPreview.risk_bands).map(([band, n]) => `${n} ${band}`).join(' · ')}${importPreview.failed_rows ? ` · ${importPreview.failed_rows} invalid row${importPreview.failed_rows === 1 ? '' : 's'} will be skipped` : ''}`
+                        : ''}
                     </div>
                   </div>
                 </div>
 
                 <button
                   type="button"
-                  onClick={commitCsvImport}
+                  onClick={() => void commitCsvImport()}
                   className="btn-primary"
+                  disabled={committing}
                   style={{ background: '#059669', padding: '0.65rem 1.4rem', fontSize: '0.88rem' }}
                 >
-                  Commit &amp; Add to Inventory
+                  {committing ? 'Importing...' : 'Commit & Add to Inventory'}
                 </button>
               </div>
             )}
@@ -979,11 +1106,11 @@ export default function AddItem() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <button
                   type="button"
-                  onClick={() => startCsvImportSimulation('hospital_stock_manifest_q4.csv')}
+                  onClick={() => void startImportPreview(sampleCsvFile())}
                   className="btn-secondary"
                   style={{ fontSize: '0.82rem', padding: '0.5rem 1rem' }}
                 >
-                  🧪 Test Upload with Demo CSV
+                  🧪 Try with a sample CSV
                 </button>
 
                 <button

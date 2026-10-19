@@ -176,6 +176,7 @@ async def chat(
             "seasonal_card": seasonal_card.model_dump() if seasonal_card else None,
             "data_sources_used": data_sources_used,
             "tools_invoked": tools_invoked,
+            "follow_up_suggestions": out.follow_up_suggestions,
         },
     )
     db.add(assistant)

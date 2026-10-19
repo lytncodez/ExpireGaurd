@@ -175,6 +175,20 @@ async def forgot_password(db: AsyncSession, email: str, ip: str | None) -> str |
         )
         if not result.success:
             logger.warning("Password reset SMS failed for user %s: %s", user.id, result.error)
+    # Also deliver by email (EMAIL_MODE=mock just logs it). Never fail the request on delivery.
+    from app.services.email_service import email_enabled, send_email
+
+    if email_enabled():
+        email_result = await send_email(
+            user.email,
+            "Your ExpireGuard password reset code",
+            f"Hello {user.name},\n\n"
+            f"Use this code to reset your ExpireGuard password. It is valid for "
+            f"{settings.RESET_TOKEN_EXPIRE_MINUTES} minutes and can be used once:\n\n{token}\n\n"
+            "If you did not ask to reset your password, you can ignore this email.",
+        )
+        if not email_result.success:
+            logger.warning("Password reset email failed for user %s: %s", user.id, email_result.error)
     return token
 
 

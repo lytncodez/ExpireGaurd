@@ -48,6 +48,22 @@ async def recipients(db: AsyncSession, company_id: uuid.UUID) -> list[str]:
     return [company_phone] if company_phone else []
 
 
+async def email_recipients(db: AsyncSession, company_id: uuid.UUID) -> list[str]:
+    """Active admins' email addresses; falls back to the pharmacy email."""
+    emails = (
+        await db.scalars(
+            select(User.email)
+            .where(User.company_id == company_id, User.is_active.is_(True), User.role == UserRole.ADMIN)
+            .order_by(User.created_at)
+        )
+    ).all()
+    unique = list(dict.fromkeys(e.strip().lower() for e in emails if e))
+    if unique:
+        return unique
+    company_email = await db.scalar(select(Company.email).where(Company.id == company_id))
+    return [company_email] if company_email else []
+
+
 async def primary_recipient(db: AsyncSession, company: Company) -> str | None:
     phones = await recipients(db, company.id)
     return phones[0] if phones else None

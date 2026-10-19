@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: SecretStr | None = None
     TWILIO_FROM_NUMBER: str | None = None
 
+    # --- Email (SMTP: Gmail, Brevo, SendGrid, Outlook ...) ---
+    EMAIL_MODE: Literal["off", "mock", "live"] = "mock"
+    EMAIL_MIN_SEVERITY: Severity = "CRITICAL"
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str | None = None
+    SMTP_PASSWORD: SecretStr | None = None
+    SMTP_SECURITY: Literal["starttls", "ssl", "none"] = "starttls"  # Gmail: starttls on 587, or ssl on 465
+    SMTP_TIMEOUT_SECONDS: float = 15.0
+    EMAIL_FROM: str | None = None
+    EMAIL_FROM_NAME: str = "ExpireGuard"
+
     # --- Imports -----------------------------------------------------------
     MAX_UPLOAD_SIZE_MB: int = 10
     MAX_IMPORT_ROWS: int = 50_000
@@ -123,6 +135,8 @@ class Settings(BaseSettings):
         if self.APP_ENV == "production":
             if len(secret) < 32 or secret.startswith("change-me"):
                 raise ValueError("JWT_SECRET_KEY must be a strong random value (>=32 chars) in production")
+        if self.EMAIL_MODE == "live" and not (self.SMTP_HOST and self.EMAIL_FROM):
+            raise ValueError("EMAIL_MODE=live requires SMTP_HOST and EMAIL_FROM (plus SMTP_USERNAME/SMTP_PASSWORD)")
         if self.SMS_MODE == "live":
             if self.SMS_PROVIDER == "africastalking" and not (self.AT_USERNAME and secret_value(self.AT_API_KEY)):
                 raise ValueError("SMS_MODE=live with africastalking requires AT_USERNAME and AT_API_KEY")

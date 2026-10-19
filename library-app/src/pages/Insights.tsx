@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useInventory } from '../api/useInventory';
+import { api, ApiError, errorMessage } from '../api/client';
 import {
-  answerGroundedQuery,
-  getSavedConversations,
-  saveConversations,
+  deleteConversation,
+  listConversations,
+  loadConversation,
+  sendChatMessage,
+  updateConversation,
   type ChatMessage,
   type Conversation,
 } from '../api/aiService';
@@ -17,17 +20,89 @@ import MiniChart from '../components/ai/MiniChart';
 import MarkdownRenderer from '../components/ai/MarkdownRenderer';
 import ExistingInsightsTabs, { type InsightItem } from '../components/ai/ExistingInsightsTabs';
 
-export default function Insights() {
-  const { items } = useInventory();
+// ─── Stored insights & recommendations (backend) → insight cards ─────────────
 
-  // Conversation history state
-  const [conversations, setConversations] = useState<Conversation[]>(() => {
-    return getSavedConversations();
-  });
-  const [activeConvId, setActiveConvId] = useState<string | null>(() => {
-    const list = getSavedConversations();
-    return list.length > 0 ? list[0].id : null;
-  });
+type InsightCategory = 'EXPIRY' | 'INVENTORY' | 'SALES' | 'PRODUCT_PERFORMANCE' | 'ANOMALY' | 'WASTE_RISK' | 'STOCK_RISK';
+
+interface ApiInsight {
+  id: string;
+  category: InsightCategory;
+  severity: 'INFO' | 'WARNING' | 'CRITICAL' | 'URGENT';
+  title: string;
+  summary: string;
+  recommendation: string;
+}
+
+interface ApiRecommendation {
+  title: string;
+  action: string;
+  rationale: string;
+  priority: 'HIGH' | 'MEDIUM' | 'LOW';
+  category: InsightCategory;
+}
+
+const TAGS: Record<InsightCategory, string> = {
+  EXPIRY: 'EXPIRY RISK',
+  WASTE_RISK: 'WASTE RISK',
+  INVENTORY: 'CAPITAL ALLOCATION',
+  STOCK_RISK: 'STOCK-OUT RISK',
+  SALES: 'SALES TREND',
+  PRODUCT_PERFORMANCE: 'PRODUCT PERFORMANCE',
+  ANOMALY: 'ANOMALY',
+};
+
+function insightType(category: InsightCategory): InsightItem['type'] {
+  if (category === 'EXPIRY' || category === 'WASTE_RISK') return 'expiring';
+  if (category === 'INVENTORY') return 'overstock';
+  if (category === 'SALES' || category === 'ANOMALY') return 'declining';
+  return 'velocity';
+}
+
+function fromInsight(i: ApiInsight): InsightItem {
+  return {
+    id: i.id,
+    type: insightType(i.category),
+    title: i.title,
+    tag: TAGS[i.category] ?? i.category,
+    metric: i.summary,
+    recommendation: i.recommendation,
+    severity: i.severity === 'URGENT' || i.severity === 'CRITICAL' ? 'high' : i.severity === 'WARNING' ? 'medium' : 'info',
+    category: 'Trends',
+  };
+}
+
+function fromRecommendation(r: ApiRecommendation, index: number): InsightItem {
+  return {
+    id: `rec-${index}`,
+    type: insightType(r.category),
+    title: r.title,
+    tag: `${r.priority} PRIORITY`,
+    metric: r.rationale,
+    recommendation: r.action,
+    severity: r.priority === 'HIGH' ? 'high' : r.priority === 'MEDIUM' ? 'medium' : 'info',
+    category: 'Recommendations',
+  };
+}
+
+const DRAFT_PREFIX = 'draft-';
+const isDraft = (id: string | null) => !!id && id.startsWith(DRAFT_PREFIX);
+const shortTitle = (text: string) => (text.length > 38 ? `${text.substring(0, 38)}...` : text);
+const nowLabel = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function chatError(err: unknown): string {
+  if (err instanceof ApiError && err.status === 403) return 'The AI assistant is available to Admin accounts only.';
+  if (err instanceof ApiError && err.status === 503) return 'The AI service is unavailable right now. Please try again shortly.';
+  return errorMessage(err);
+}
+
+export default function Insights() {
+  const { settings } = useInventory();
+  const pharmacyName = settings?.pharmacyName || 'your pharmacy';
+
+  // Conversation history (stored on the server)
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const loadedConversations = useRef(new Set<string>());
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -38,10 +113,16 @@ export default function Insights() {
   const streamingAbortRef = useRef(false);
 
   // Error & Status states
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [chatErrorText, setErrorMessage] = useState<string | null>(null);
   const [isRateLimited, setIsRateLimited] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
+  // Insight cards (stored insights + live recommendations)
+  const [insightCards, setInsightCards] = useState<InsightItem[]>([]);
+  const [insightsLoading, setInsightsLoading] = useState(true);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
+  const [generatingInsights, setGeneratingInsights] = useState(false);
 
   // Auto-scroll anchor
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -50,10 +131,68 @@ export default function Insights() {
   const activeConversation = conversations.find(c => c.id === activeConvId);
   const messages = activeConversation?.messages || [];
 
-  // Persist conversations on changes
+  const patchConversation = (id: string, change: (c: Conversation) => Conversation) =>
+    setConversations(prev => prev.map(c => (c.id === id ? change(c) : c)));
+
+  // ─── Load history & insights ───────────────────────────────────────────────
+
   useEffect(() => {
-    saveConversations(conversations);
-  }, [conversations]);
+    let cancelled = false;
+    listConversations()
+      .then(list => {
+        if (cancelled) return;
+        setConversations(list);
+        if (list.length > 0) setActiveConvId(current => current ?? list[0].id);
+      })
+      .catch(err => !cancelled && setErrorMessage(chatError(err)));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch a conversation's messages the first time it is opened
+  useEffect(() => {
+    if (!activeConvId || isDraft(activeConvId) || loadedConversations.current.has(activeConvId)) return;
+    loadedConversations.current.add(activeConvId);
+    loadConversation(activeConvId)
+      .then(full => patchConversation(full.id, c => ({ ...c, messages: full.messages })))
+      .catch(err => {
+        loadedConversations.current.delete(activeConvId);
+        setErrorMessage(chatError(err));
+      });
+  }, [activeConvId]);
+
+  const loadInsights = useCallback(async () => {
+    setInsightsLoading(true);
+    setInsightsError(null);
+    try {
+      const [stored, recs] = await Promise.all([
+        api<{ items: ApiInsight[] }>('/insights?page_size=20'),
+        api<{ recommendations: ApiRecommendation[] }>('/insights/recommendations'),
+      ]);
+      setInsightCards([...recs.recommendations.map(fromRecommendation), ...stored.items.map(fromInsight)]);
+    } catch (err) {
+      setInsightsError(chatError(err));
+    } finally {
+      setInsightsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadInsights();
+  }, [loadInsights]);
+
+  const handleGenerateInsights = async () => {
+    setGeneratingInsights(true);
+    try {
+      await api('/insights/generate', { method: 'POST', body: {} });
+      await loadInsights();
+    } catch (err) {
+      setInsightsError(chatError(err));
+    } finally {
+      setGeneratingInsights(false);
+    }
+  };
 
   // Scroll to bottom when messages update or streaming text changes
   useEffect(() => {
@@ -63,140 +202,111 @@ export default function Insights() {
   // ─── Chat Actions ──────────────────────────────────────────────────────────
 
   const handleStartNewChat = () => {
-    const newId = `conv-${Date.now()}`;
-    const newConv: Conversation = {
-      id: newId,
+    const draft: Conversation = {
+      id: `${DRAFT_PREFIX}${Date.now()}`,
       title: 'New Conversation',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       isPinned: false,
       messages: [],
     };
-    setConversations(prev => [newConv, ...prev]);
-    setActiveConvId(newId);
+    setConversations(prev => [draft, ...prev.filter(c => !isDraft(c.id) || c.messages.length > 0)]);
+    setActiveConvId(draft.id);
     setErrorMessage(null);
     setIsRateLimited(false);
   };
 
   const handleRenameConversation = (id: string, newTitle: string) => {
-    setConversations(prev =>
-      prev.map(c => (c.id === id ? { ...c, title: newTitle, updatedAt: new Date().toISOString() } : c))
-    );
+    patchConversation(id, c => ({ ...c, title: newTitle, updatedAt: new Date().toISOString() }));
+    if (!isDraft(id)) updateConversation(id, { title: newTitle }).catch(err => setErrorMessage(chatError(err)));
   };
 
   const handleTogglePinConversation = (id: string) => {
-    setConversations(prev =>
-      prev.map(c => (c.id === id ? { ...c, isPinned: !c.isPinned, updatedAt: new Date().toISOString() } : c))
-    );
+    const current = conversations.find(c => c.id === id);
+    if (!current) return;
+    const isPinned = !current.isPinned;
+    patchConversation(id, c => ({ ...c, isPinned }));
+    if (!isDraft(id)) updateConversation(id, { isPinned }).catch(err => setErrorMessage(chatError(err)));
   };
 
   const handleDeleteConversation = (id: string) => {
     setConversations(prev => {
       const updated = prev.filter(c => c.id !== id);
-      if (activeConvId === id) {
-        setActiveConvId(updated.length > 0 ? updated[0].id : null);
-      }
+      if (activeConvId === id) setActiveConvId(updated.length > 0 ? updated[0].id : null);
       return updated;
     });
+    loadedConversations.current.delete(id);
+    if (!isDraft(id)) deleteConversation(id).catch(err => setErrorMessage(chatError(err)));
+  };
+
+  /** Shows the server's answer word by word, then stores it in the conversation. */
+  const revealAnswer = (convId: string, answer: ChatMessage) => {
+    setIsStreaming(true);
+    setStreamedText('');
+    streamingAbortRef.current = false;
+    const words = answer.content.split(' ');
+    let currentIdx = 0;
+    const interval = setInterval(() => {
+      if (streamingAbortRef.current || currentIdx >= words.length) {
+        clearInterval(interval);
+        setIsStreaming(false);
+        patchConversation(convId, c => ({ ...c, updatedAt: new Date().toISOString(), messages: [...c.messages, answer] }));
+        return;
+      }
+      setStreamedText(prev => (prev ? `${prev} ${words[currentIdx]}` : words[currentIdx]));
+      currentIdx++;
+    }, 20);
   };
 
   const handleSendMessage = async (text: string) => {
-    if (!text.trim() || isStreaming) return;
+    if (!text.trim() || isStreaming || isLoading) return;
 
-    let targetConvId = activeConvId;
-
-    // Create a new conversation if none active
-    if (!targetConvId || !conversations.some(c => c.id === targetConvId)) {
-      targetConvId = `conv-${Date.now()}`;
-      const newConv: Conversation = {
-        id: targetConvId,
-        title: text.length > 38 ? `${text.substring(0, 38)}...` : text,
+    // Work in the active conversation, or a new draft that becomes a real one after the first answer
+    let convId = activeConvId;
+    if (!convId || !conversations.some(c => c.id === convId)) {
+      convId = `${DRAFT_PREFIX}${Date.now()}`;
+      const draft: Conversation = {
+        id: convId,
+        title: shortTitle(text),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         isPinned: false,
         messages: [],
       };
-      setConversations(prev => [newConv, ...prev]);
-      setActiveConvId(targetConvId);
+      setConversations(prev => [draft, ...prev]);
+      setActiveConvId(convId);
     }
 
-    const userMessage: ChatMessage = {
-      id: `msg-${Date.now()}-user`,
-      role: 'user',
-      content: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
+    const userMessage: ChatMessage = { id: `local-${Date.now()}`, role: 'user', content: text, timestamp: nowLabel() };
+    patchConversation(convId, c => ({
+      ...c,
+      title: c.messages.length === 0 && c.title === 'New Conversation' ? shortTitle(text) : c.title,
+      updatedAt: new Date().toISOString(),
+      messages: [...c.messages, userMessage],
+    }));
 
-    // Update conversation with user message and title if first message
-    setConversations(prev =>
-      prev.map(c => {
-        if (c.id === targetConvId) {
-          const autoTitle = c.messages.length === 0 ? (text.length > 38 ? `${text.substring(0, 38)}...` : text) : c.title;
-          return {
-            ...c,
-            title: autoTitle,
-            updatedAt: new Date().toISOString(),
-            messages: [...c.messages, userMessage],
-          };
-        }
-        return c;
-      })
-    );
-
-    // Compute grounded response from stock pipeline
     setIsLoading(true);
     setErrorMessage(null);
-
-    // Simulate server response delay and word-by-word streaming
-    setTimeout(() => {
-      setIsLoading(false);
-      try {
-        const fullResponse = answerGroundedQuery(text, items);
-        const assistantMsgId = `msg-${Date.now()}-asst`;
-
-        // Start streaming effect
-        setIsStreaming(true);
-        setStreamedText('');
-        streamingAbortRef.current = false;
-
-        const words = fullResponse.content.split(' ');
-        let currentIdx = 0;
-
-        const interval = setInterval(() => {
-          if (streamingAbortRef.current || currentIdx >= words.length) {
-            clearInterval(interval);
-            setIsStreaming(false);
-
-            // Commit final completed message into conversation
-            const finalAssistantMsg: ChatMessage = {
-              ...fullResponse,
-              id: assistantMsgId,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            };
-
-            setConversations(prev =>
-              prev.map(c => {
-                if (c.id === targetConvId) {
-                  return {
-                    ...c,
-                    updatedAt: new Date().toISOString(),
-                    messages: [...c.messages, finalAssistantMsg],
-                  };
-                }
-                return c;
-              })
-            );
-            return;
-          }
-
-          setStreamedText(prev => (prev ? `${prev} ${words[currentIdx]}` : words[currentIdx]));
-          currentIdx++;
-        }, 32);
-      } catch (err: any) {
-        setIsLoading(false);
-        setErrorMessage('Failed to query inventory pipeline. Click retry to attempt again.');
+    try {
+      const result = await sendChatMessage(text, isDraft(convId) ? null : convId);
+      let targetId = convId;
+      if (isDraft(convId)) {
+        // The server created the conversation: switch the draft over to its real id
+        const draftId = convId;
+        targetId = result.conversationId;
+        loadedConversations.current.add(targetId);
+        setConversations(prev => prev.map(c => (c.id === draftId ? { ...c, id: targetId } : c)));
+        setActiveConvId(targetId);
+        const title = shortTitle(text);
+        updateConversation(targetId, { title }).catch(() => undefined);
       }
-    }, 450);
+      setIsLoading(false);
+      revealAnswer(targetId, result.message);
+    } catch (err) {
+      setIsLoading(false);
+      if (err instanceof ApiError && err.status === 429) setIsRateLimited(true);
+      else setErrorMessage(chatError(err));
+    }
   };
 
   const handleStopStreaming = () => {
@@ -205,41 +315,31 @@ export default function Insights() {
   };
 
   const handleCopyMessage = (content: string) => {
-    navigator.clipboard.writeText(content);
+    void navigator.clipboard.writeText(content);
     setCopyFeedback('Copied to clipboard!');
     setTimeout(() => setCopyFeedback(null), 2000);
   };
 
   const handleTogglePinMessage = (messageId: string) => {
-    setConversations(prev =>
-      prev.map(c => {
-        if (c.id === activeConvId) {
-          return {
-            ...c,
-            messages: c.messages.map(m => (m.id === messageId ? { ...m, isPinned: !m.isPinned } : m)),
-          };
-        }
-        return c;
-      })
-    );
+    if (!activeConvId) return;
+    patchConversation(activeConvId, c => ({
+      ...c,
+      messages: c.messages.map(m => (m.id === messageId ? { ...m, isPinned: !m.isPinned } : m)),
+    }));
   };
 
   const handleRegenerate = (msgIndex: number) => {
-    // Find preceding user prompt
     const prevUserMsg = messages
       .slice(0, msgIndex)
       .reverse()
       .find(m => m.role === 'user');
-
-    if (prevUserMsg) {
-      handleSendMessage(prevUserMsg.content);
-    }
+    if (prevUserMsg) void handleSendMessage(prevUserMsg.content);
   };
 
   // Connect existing insight cards to AI chat
   const handleAskAIAboutInsight = (insight: InsightItem) => {
-    const prompt = `Tell me more about this ${insight.tag}: "${insight.title}" (${insight.metric}). How should I execute: ${insight.recommendation}?`;
-    handleSendMessage(prompt);
+    const prompt = `Tell me more about this ${insight.tag.toLowerCase()}: "${insight.title}". ${insight.metric} How should I act on it?`;
+    void handleSendMessage(prompt);
   };
 
   // Get last suggestions for follow-up chips
@@ -331,7 +431,7 @@ export default function Insights() {
                 </span>
               </div>
               <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: '0.1rem' }}>
-                Grounded in Accra Pharmacy ledger • Ghana Seasonality Engine • FEFO Protocol
+                Grounded in {pharmacyName}'s live stock &amp; sales • Ghana seasonal planning • FEFO
               </div>
             </div>
           </div>
@@ -395,7 +495,7 @@ export default function Insights() {
               borderBottom: '1px solid #F87171',
             }}
           >
-            <span>⏳ Rate limit active (20 queries/min). Please wait a few seconds before sending another question.</span>
+            <span>⏳ Too many questions in a short time. Please wait a minute before asking again.</span>
             <button
               type="button"
               onClick={() => setIsRateLimited(false)}
@@ -438,7 +538,7 @@ export default function Insights() {
 
               {/* Preserved Tabs & Insight Cards below the grid */}
               <div style={{ maxWidth: '960px', margin: '2rem auto 0' }}>
-                <ExistingInsightsTabs onAskAIAboutInsight={handleAskAIAboutInsight} />
+                <ExistingInsightsTabs insights={insightCards} loading={insightsLoading} error={insightsError} generating={generatingInsights} onGenerate={() => void handleGenerateInsights()} onAskAIAboutInsight={handleAskAIAboutInsight} />
               </div>
             </div>
           ) : (
@@ -735,7 +835,7 @@ export default function Insights() {
               )}
 
               {/* Error State with Retry */}
-              {errorMessage && (
+              {chatErrorText && (
                 <div
                   style={{
                     background: '#FEF2F2',
@@ -748,7 +848,7 @@ export default function Insights() {
                   }}
                 >
                   <div style={{ color: '#991B1B', fontSize: '0.82rem', fontWeight: 600 }}>
-                    ⚠️ {errorMessage}
+                    ⚠️ {chatErrorText}
                   </div>
                   <button
                     type="button"
@@ -757,7 +857,7 @@ export default function Insights() {
                         .slice()
                         .reverse()
                         .find(m => m.role === 'user');
-                      if (lastUser) handleSendMessage(lastUser.content);
+                      if (lastUser) void handleSendMessage(lastUser.content);
                     }}
                     style={{
                       background: '#EF4444',
@@ -777,7 +877,7 @@ export default function Insights() {
 
               {/* Preserved Tabs & Insight Cards at bottom of conversation */}
               <div style={{ marginTop: '2.5rem' }}>
-                <ExistingInsightsTabs onAskAIAboutInsight={handleAskAIAboutInsight} />
+                <ExistingInsightsTabs insights={insightCards} loading={insightsLoading} error={insightsError} generating={generatingInsights} onGenerate={() => void handleGenerateInsights()} onAskAIAboutInsight={handleAskAIAboutInsight} />
               </div>
             </div>
           )}

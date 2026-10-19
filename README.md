@@ -1,83 +1,99 @@
-# ExpiryGuard
+# ExpireGuard
 
-ExpiryGuard is a pharmacy stock and batch tracking frontend. It helps staff review inventory, expiry risk, and FEFO priority, while giving administrators reporting and stock valuation views.
+Pharmacy expiry-risk and inventory management: a React frontend backed by a FastAPI + PostgreSQL API.
 
-## Features
+```
+expireguard/
+├── backend/    FastAPI, SQLAlchemy 2 (async), Alembic, PostgreSQL — see backend/README.md
+└── library-app/ React 19 + TypeScript + Vite frontend — talks to the backend through /api
+```
 
-- **Dashboard:** inventory overview, rotating product spotlight, urgent batches, and FEFO queue.
-- **Inventory:** searchable batch repository with All Stock, FEFO, At Risk, and Expired views; quantity and expiry filters; status badges; and quarantine actions.
-- **Batch details:** product photo upload, batch information, expiry countdown, and role-specific price and supplier details.
-- **Add / Import:** manual stock entry plus simulated barcode scan and sample CSV import flows.
-- **Alerts:** current expiry warnings, risk filters, and acknowledgement actions.
-- **Reports (Admin):** risk distribution, a 12-month expiry value projection, category and supplier summaries, at-risk products, stock movement, and filtered CSV export.
-- **AI Insights (Admin):** sample operational insight and action-plan views.
-- **Settings (Admin):** risk thresholds, pharmacy settings, and a frontend user and role management interface.
-- **Shared design system:** responsive layouts, collapsible navigation, risk-band colors, reusable stat cards, and GH₵ currency formatting.
+**How it fits together**
 
-## Roles
+* One pharmacy per install. The first person to sign up becomes the **Admin**; everyone after joins as a
+  **Dispenser**. Admins can also add staff from Settings → Users.
+* Risk bands follow the frontend: **Critical ≤ 7 days, Action Required ≤ 30, Monitor ≤ 60, Safe beyond**,
+  Expired at 0. Admins change them in Settings; the backend re-classifies stock and alerts immediately.
+* All data is real: sign-in, inventory, scanning (GS1 DataMatrix), CSV/Excel import, alerts and workflow actions
+  (acknowledge, flag, quarantine, return, dispose, dispense), reports, settings, users, and the AI assistant
+  (chat history, seasonal purchase plans, insights) all go through the API. Nothing is kept in browser storage
+  except the login token.
+* Critical and expired stock triggers **SMS** (Africa's Talking or Twilio) and **email** (any SMTP, e.g. Gmail) alerts
+  to admins. Both run in mock mode by default (printed in the backend window) until you add real credentials.
+* Dispensers never receive unit costs or supplier names — the backend strips them, not just the UI.
 
-The demo sign-in supports two roles:
+## Run it locally (Windows PowerShell shown; macOS/Linux are the same with `source .venv/bin/activate`)
 
-| Role | Demo credentials | Access |
-| --- | --- | --- |
-| Admin | `admin@expireguard.com` / `admin123` | All pages, cost and supplier details, valuation reports, and settings. |
-| Dispenser | `dispenser@expireguard.com` / `dispenser123` | Dashboard, inventory, add/import, and alerts. Selling prices are shown; unit costs, supplier and receipt details, and valuation metrics are hidden in the app interface. |
+You need **Python 3.12+**, **PostgreSQL 16** and **Node.js 20+**.
 
-The legacy demo account `manager@expireguard.com` / `manager123` also maps to Dispenser.
+### 1. Database
 
-### Access-control limitation
+Create a database once (in `psql` as the `postgres` user):
 
-This repository is currently a browser-only prototype. Authentication, role overrides, settings, and inventory persistence are simulated with React state and `localStorage`; there is no server or API enforcing permissions. The role-based navigation, route guards, and role-scoped inventory context are client-side controls and **do not provide server-side confidentiality**. Do not use them to protect real commercial data until authentication and inventory access are moved to a backend that authorizes every request.
+```sql
+CREATE DATABASE expireguard;
+```
 
-## Data behavior
+### 2. Backend (terminal 1)
 
-- Initial inventory comes from `library-app/src/api/mockData.ts`.
-- Inventory changes persist in browser `localStorage` under `expireguard_items`.
-- Existing saved inventory is retained between reloads in the same browser profile.
-- The scanner and CSV import screens currently demonstrate the workflow using sample records; they are not connected to a barcode service or general-purpose CSV parser.
-- Reports use the current inventory dataset. The 12-month at-risk chart groups current batch cost by expiry month; it is a projection from present stock, not historical stock accounting.
+```powershell
+cd backend
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+# edit .env: set DATABASE_URL (your postgres password) and JWT_SECRET_KEY:
+#   py -c "import secrets; print(secrets.token_urlsafe(48))"
+alembic upgrade head                              # run again after every update
+python scripts/seed_demo_data.py --run-expiry     # optional demo pharmacy
+uvicorn app.main:app --reload --port 8000
+```
 
-## Tech stack
+API docs: http://localhost:8000/docs
 
-- React 19, TypeScript 6, and Vite 8
-- React Router 7
-- React Context and browser `localStorage`
-- Lucide icons and custom CSS design system
-- Oxlint
+### 3. Frontend (terminal 2)
 
-## Run locally
-
-Requirements: Node.js compatible with the installed Vite version and npm.
-
-```bash
+```powershell
 cd library-app
 npm install
 npm run dev
 ```
 
-Open the URL printed by Vite (typically `http://localhost:5173`). Use either demo account above to sign in.
+Open http://localhost:5173. In development the app calls `/api/...` and Vite forwards it to
+`http://localhost:8000`, so no CORS setup is needed. For a production build hosted separately from the API, set
+`VITE_API_URL` (see `library-app/.env.example`) and add the site to the backend's `CORS_ORIGINS`.
 
-## Build and lint
+### Demo logins (after seeding)
 
-```bash
-npm run build
+| Email | Password | Role |
+|---|---|---|
+| admin@expireguard.com | admin123 | Admin |
+| dispenser@expireguard.com | dispenser123 | Dispenser |
+
+Skip the seed to start clean: the first account you create on the Sign Up page becomes the Admin.
+
+## Tests
+
+```powershell
+cd backend
+# create the test database once:  CREATE DATABASE expireguard_test;
+pytest
+```
+
+```powershell
+cd library-app
+npm run build      # type-checks and builds
 npm run lint
 ```
 
-## Project structure
+## Notes
 
-```text
-ExpireGaurd/
-├── library-app/
-│   ├── public/                 # Static images and icons
-│   └── src/
-│       ├── api/                # Demo authentication and inventory contexts/data
-│       ├── components/         # Shared navigation, currency input, stat card
-│       ├── pages/              # Dashboard, Inventory, Add/Import, Alerts, Reports, etc.
-│       ├── styles/             # App and design-system CSS
-│       ├── utils/              # Shared currency formatting
-│       ├── App.tsx             # Routes, role gates, app shell, error boundary
-│       └── main.tsx            # Application entry point
-├── README.md
-└── .gitignore
-```
+* Never commit `backend/.env` or `library-app/.env` — both are git-ignored. Use a fresh `JWT_SECRET_KEY` in production.
+* SMS and email run in `mock` mode by default (messages are logged, not sent). The AI layer uses the `mock` provider
+  unless `AI_PROVIDER` and an API key are set. See `backend/.env.example` for every setting.
+* Gmail: turn on 2-Step Verification on the Google account, create an **App Password**, then set `EMAIL_MODE=live`,
+  `SMTP_USERNAME`, `SMTP_PASSWORD` (the app password) and `EMAIL_FROM` in `backend/.env`. Test with
+  `POST /alerts/test-email` on the API docs page.
+* Hosting: backend + PostgreSQL on Render (root directory `backend`), frontend on Vercel or Render (root directory
+  `library-app`, environment variable `VITE_API_URL` = the backend URL).
+* Password reset sends a code by email (and by SMS if the user has a phone number); in development the code is also shown on screen.

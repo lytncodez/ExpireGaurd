@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from app.models.alert import AlertSeverity, AlertType
 from app.schemas import ORMModel
@@ -35,3 +35,10 @@ class TestSMSRequest(BaseModel):
     phone_number: Phone = Field(description="E.164 recipient, e.g. +254712345678")
     message: str = Field(default="ExpireGuard test message: SMS delivery is working.", max_length=480)
 
+
+
+class TestEmailRequest(BaseModel):
+    email: EmailStr = Field(description="Recipient address")
+    message: str = Field(
+        default="ExpireGuard test email: email alerts are working.", min_length=1, max_length=5000,
+    )

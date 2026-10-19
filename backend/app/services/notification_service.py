@@ -1,4 +1,4 @@
-"""Turns alerts into delivered notifications: Alert -> Notification records -> SMS service."""
+"""Turns alerts into delivered notifications: Alert -> Notification records -> SMS and email services."""
 
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ from app.models import (
     User,
 )
 from app.services import audit_service
+from app.services.alert_service import email_recipients
 from app.services.alert_service import recipients as alert_recipients
+from app.services.email_service import EmailResult, email_enabled, send_email
 from app.services.sms_service import SMSResult, send_sms
 from app.utils.dates import utcnow
 from app.utils.pagination import PageParams, paginate
@@ -35,13 +37,41 @@ SMS_MAX_LENGTH = 459  # 3 concatenated GSM segments
 
 @dataclass
 class NotifyOutcome:
+    """SMS counts (sent/failed/skipped) plus email counts kept separately."""
+
     sent: int = 0
     failed: int = 0
     skipped: int = 0
+    email_sent: int = 0
+    email_failed: int = 0
 
 
 def should_send_sms(alert: Alert) -> bool:
     return SEVERITY_RANK[alert.severity] >= SEVERITY_RANK[AlertSeverity(settings.SMS_MIN_SEVERITY)]
+
+
+def should_send_email(alert: Alert) -> bool:
+    return email_enabled() and SEVERITY_RANK[alert.severity] >= SEVERITY_RANK[AlertSeverity(settings.EMAIL_MIN_SEVERITY)]
+
+
+def format_email(alert: Alert, company_name: str) -> tuple[str, str]:
+    subject = f"[ExpireGuard] {alert.severity.value}: {alert.title}"[:250]
+    lines = [
+        f"{company_name}",
+        "",
+        alert.message,
+    ]
+    if alert.days_remaining is not None:
+        lines.append(f"Days to expiry: {alert.days_remaining}")
+    if alert.quantity_at_risk:
+        lines.append(f"Units at risk: {alert.quantity_at_risk}")
+    lines += [
+        "",
+        "Open ExpireGuard to acknowledge, quarantine or dispose of this batch.",
+        "",
+        "You receive this email because you are an administrator of this pharmacy in ExpireGuard.",
+    ]
+    return subject, "\n".join(lines)
 
 
 def format_sms(alert: Alert, company_name: str) -> str:
@@ -49,7 +79,7 @@ def format_sms(alert: Alert, company_name: str) -> str:
     return text if len(text) <= SMS_MAX_LENGTH else text[: SMS_MAX_LENGTH - 3] + "..."
 
 
-def _apply_result(notification: Notification, result: SMSResult) -> None:
+def _apply_result(notification: Notification, result: SMSResult | EmailResult) -> None:
     notification.attempts += 1
     notification.provider = result.provider
     if result.success:
@@ -63,18 +93,57 @@ def _apply_result(notification: Notification, result: SMSResult) -> None:
 
 
 async def notify_alert(db: AsyncSession, alert: Alert, *, force: bool = False) -> NotifyOutcome:
-    """Send SMS for one alert to every recipient. Records each attempt; commits; never raises."""
+    """Send SMS and email for one alert to every recipient. Records each attempt; commits; never raises."""
     outcome = NotifyOutcome()
-    if not force and not should_send_sms(alert):
-        outcome.skipped += 1
-        return outcome
     company_name = await db.scalar(select(Company.name).where(Company.id == alert.company_id)) or "ExpireGuard"
+    if force or should_send_sms(alert):
+        await _notify_sms(db, alert, company_name, outcome)
+    else:
+        outcome.skipped += 1
+    if force or should_send_email(alert):
+        await _notify_email(db, alert, company_name, outcome)
+    return outcome
+
+
+async def _notify_email(db: AsyncSession, alert: Alert, company_name: str, outcome: NotifyOutcome) -> None:
+    addresses = await email_recipients(db, alert.company_id)
+    if not addresses:
+        return
+    subject, body = format_email(alert, company_name)
+    for address in addresses:
+        notification = Notification(
+            company_id=alert.company_id,
+            alert_id=alert.id,
+            channel=NotificationChannel.EMAIL,
+            recipient=address,
+            subject=subject,
+            message=body,
+            status=NotificationStatus.PENDING,
+            attempts=0,
+        )
+        db.add(notification)
+        await db.flush()
+        result = await send_email(address, subject, body)
+        _apply_result(notification, result)
+        if result.success:
+            outcome.email_sent += 1
+        else:
+            outcome.email_failed += 1
+        audit_service.record(
+            db, action=AuditAction.EMAIL_SENT if result.success else AuditAction.EMAIL_FAILED,
+            company_id=alert.company_id, entity_type="notification", entity_id=notification.id,
+            metadata={"alert_id": str(alert.id), "provider": result.provider, "error": result.error},
+        )
+    await db.commit()
+
+
+async def _notify_sms(db: AsyncSession, alert: Alert, company_name: str, outcome: NotifyOutcome) -> None:
     phones = await alert_recipients(db, alert.company_id)
     if not phones:
-        alert.sms_error = "No recipient phone number configured (add one to an admin/manager or the company)"
+        alert.sms_error = "No recipient phone number configured (add one to an admin or the pharmacy)"
         await db.commit()
         outcome.failed += 1
-        return outcome
+        return
 
     body = format_sms(alert, company_name)
     errors: list[str] = []
@@ -110,7 +179,6 @@ async def notify_alert(db: AsyncSession, alert: Alert, *, force: bool = False) -
     alert.recipient_phone = alert.recipient_phone or phones[0]
     alert.sms_error = "; ".join(errors)[:1000] if errors else None
     await db.commit()
-    return outcome
 
 
 async def notify_alerts(db: AsyncSession, alert_ids: list[uuid.UUID]) -> NotifyOutcome:
@@ -129,10 +197,23 @@ async def notify_alerts(db: AsyncSession, alert_ids: list[uuid.UUID]) -> NotifyO
         total.sent += o.sent
         total.failed += o.failed
         total.skipped += o.skipped
+        total.email_sent += o.email_sent
+        total.email_failed += o.email_failed
     return total
 
 
 async def retry_notification(db: AsyncSession, notification: Notification) -> Notification:
+    if notification.channel == NotificationChannel.EMAIL:
+        email_result = await send_email(notification.recipient, notification.subject or "ExpireGuard alert",
+                                         notification.message)
+        _apply_result(notification, email_result)
+        audit_service.record(
+            db, action=AuditAction.EMAIL_SENT if email_result.success else AuditAction.EMAIL_FAILED,
+            company_id=notification.company_id, entity_type="notification", entity_id=notification.id,
+            metadata={"retry": True, "attempts": notification.attempts, "error": email_result.error},
+        )
+        await db.commit()
+        return notification
     result = await send_sms(notification.recipient, notification.message)
     _apply_result(notification, result)
     if notification.alert_id:
@@ -187,6 +268,36 @@ async def send_test_sms(db: AsyncSession, user: User, phone: str, message: str) 
     audit_service.record(
         db,
         action=AuditAction.SMS_SENT if result.success else AuditAction.SMS_FAILED,
+        company_id=user.company_id,
+        user_id=user.id,
+        entity_type="notification",
+        entity_id=notification.id,
+        metadata={"test": True, "provider": result.provider, "error": result.error},
+    )
+    await db.commit()
+    await db.refresh(notification)
+    return notification
+
+
+async def send_test_email(db: AsyncSession, user: User, address: str, message: str) -> Notification:
+    subject = "ExpireGuard test email"
+    notification = Notification(
+        company_id=user.company_id,
+        alert_id=None,
+        channel=NotificationChannel.EMAIL,
+        recipient=address,
+        subject=subject,
+        message=message,
+        status=NotificationStatus.PENDING,
+        attempts=0,
+    )
+    db.add(notification)
+    await db.flush()
+    result = await send_email(address, subject, message)
+    _apply_result(notification, result)
+    audit_service.record(
+        db,
+        action=AuditAction.EMAIL_SENT if result.success else AuditAction.EMAIL_FAILED,
         company_id=user.company_id,
         user_id=user.id,
         entity_type="notification",

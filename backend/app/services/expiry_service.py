@@ -142,6 +142,8 @@ class ExpiryCheckResult:
     alerts_auto_resolved: int = 0
     sms_sent: int = 0
     sms_failed: int = 0
+    emails_sent: int = 0
+    emails_failed: int = 0
     new_alert_ids: list[uuid.UUID] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -156,6 +158,8 @@ class ExpiryCheckResult:
             "alerts_auto_resolved": self.alerts_auto_resolved,
             "sms_sent": self.sms_sent,
             "sms_failed": self.sms_failed,
+            "emails_sent": self.emails_sent,
+            "emails_failed": self.emails_failed,
             "new_alert_ids": [str(a) for a in self.new_alert_ids],
         }
 
@@ -255,6 +259,7 @@ async def run_expiry_check(
     if notify and result.new_alert_ids:
         outcome = await notification_service.notify_alerts(db, result.new_alert_ids)
         result.sms_sent, result.sms_failed = outcome.sent, outcome.failed
+        result.emails_sent, result.emails_failed = outcome.email_sent, outcome.email_failed
 
     logger.info(
         "Expiry check company=%s checked=%d created=%d duplicates=%d sms_sent=%d sms_failed=%d",

@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { useAuth } from '../api/useAuth';
+import { useInventory } from '../api/useInventory';
+import { api, errorMessage } from '../api/client';
 
 interface UserRecord {
   id: string;
@@ -34,153 +36,183 @@ const DEFAULT_THRESHOLDS: ThresholdSettings = {
   enable0d: true,
 };
 
-const INITIAL_USERS: UserRecord[] = [
-  {
-    id: 'u1',
-    name: 'Admin User',
-    email: 'admin@expireguard.com',
-    role: 'admin',
-    status: 'active',
-    lastActive: 'Just now',
-  },
-  {
-    id: 'u2',
-    name: 'Jane Dispenser',
-    email: 'dispenser@expireguard.com',
-    role: 'dispenser',
-    status: 'active',
-    lastActive: '2 hours ago',
-  },
-  {
-    id: 'u3',
-    name: 'Kofi Boateng',
-    email: 'kofi.b@pharma.com',
-    role: 'dispenser',
-    status: 'active',
-    lastActive: 'Yesterday',
-  },
-  {
-    id: 'u4',
-    name: 'Abena Owusu',
-    email: 'abena.o@pharma.com',
-    role: 'dispenser',
-    status: 'inactive',
-    lastActive: '5 days ago',
-  },
-];
+interface ApiUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'dispenser';
+  is_active: boolean;
+  last_login_at: string | null;
+}
+
+function formatLastActive(value: string | null): string {
+  if (!value) return 'Never';
+  const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60000);
+  if (minutes < 2) return 'Just now';
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'Yesterday' : `${days} days ago`;
+}
+
+function toUserRecord(u: ApiUser): UserRecord {
+  return { id: u.id, name: u.name, email: u.email, role: u.role, status: u.is_active ? 'active' : 'inactive', lastActive: formatLastActive(u.last_login_at) };
+}
 
 export default function Settings() {
   const { user, updateUserRole } = useAuth();
   const isAdmin = user?.role === 'admin';
 
-  // Configurable thresholds stored in localStorage
-  const [thresholds, setThresholds] = useState<ThresholdSettings>(() => {
-    const saved = localStorage.getItem('expireguard_thresholds');
-    if (saved) {
-      try {
-        return { ...DEFAULT_THRESHOLDS, ...JSON.parse(saved) };
-      } catch {
-        return DEFAULT_THRESHOLDS;
-      }
-    }
-    return DEFAULT_THRESHOLDS;
-  });
+  const { settings, refreshSettings, refresh } = useInventory();
 
-  // Users state
-  const [users, setUsers] = useState<UserRecord[]>(() => {
-    const saved = localStorage.getItem('expireguard_users');
-    if (saved) {
-      try {
-        const savedUsers = JSON.parse(saved) as UserRecord[];
-        return savedUsers.map(savedUser => ({ ...savedUser, role: savedUser.role === 'admin' ? 'admin' : 'dispenser' }));
-      } catch {
-        return INITIAL_USERS;
-      }
+  // Risk bands live on the server (per pharmacy); this form edits a local copy until saved.
+  const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS);
+  useEffect(() => {
+    if (settings) {
+      setThresholds({
+        criticalDays: settings.criticalDays,
+        actionDays: settings.actionDays,
+        monitorDays: settings.monitorDays,
+        safeDays: settings.safeDays,
+        enable90d: settings.enable90d,
+        enable60d: settings.enable60d,
+        enable30d: settings.enable30d,
+        enable7d: settings.enable7d,
+        enable0d: settings.enable0d,
+      });
+      setFacilityName(settings.pharmacyName);
+      setLicenseNumber(settings.licenseNumber ?? '');
+      setCurrency(settings.currency);
     }
-    return INITIAL_USERS;
-  });
+  }, [settings]);
+
+  // Users state (loaded from the server)
+  const [users, setUsers] = useState<UserRecord[]>([]);
 
   // New user form modal/inline state
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'dispenser'>('dispenser');
+  const [credentialNotice, setCredentialNotice] = useState<string | null>(null);
 
   // Facility info state
-  const [facilityName, setFacilityName] = useState('Accra Central Pharmacy - Dispensary Unit');
-  const [licenseNumber, setLicenseNumber] = useState('GHA-FDA-PH-2024-8891');
+  const [facilityName, setFacilityName] = useState('');
+  const [licenseNumber, setLicenseNumber] = useState('');
   const [currency, setCurrency] = useState('GHS');
 
   // Save feedback state
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    localStorage.setItem('expireguard_thresholds', JSON.stringify(thresholds));
-  }, [thresholds]);
-
-  useEffect(() => {
-    localStorage.setItem('expireguard_users', JSON.stringify(users));
-  }, [users]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const loadUsers = useCallback(async () => {
+    try {
+      const page = await api<{ items: ApiUser[] }>('/users?page_size=200');
+      setUsers(page.items.map(toUserRecord));
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAdmin) void loadUsers();
+  }, [isAdmin, loadUsers]);
+
+  const saveThresholds = async (next: ThresholdSettings, message: string) => {
+    if (!(next.criticalDays < next.actionDays && next.actionDays < next.monitorDays && next.monitorDays <= next.safeDays)) {
+      showToast('Bands must increase: Critical < Action Required < Monitor ≤ Early Advisory.');
+      return;
+    }
+    try {
+      await api('/settings/thresholds', { method: 'PUT', body: next });
+      await Promise.all([refreshSettings(), refresh()]); // batch statuses follow the new bands
+      showToast(message);
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  };
+
   const handleSaveThresholds = (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem('expireguard_thresholds', JSON.stringify(thresholds));
-    showToast('Alert thresholds & risk-band parameters updated successfully!');
+    void saveThresholds(thresholds, 'Alert thresholds & risk-band parameters updated successfully!');
   };
 
   const handleResetThresholds = () => {
     setThresholds(DEFAULT_THRESHOLDS);
-    localStorage.setItem('expireguard_thresholds', JSON.stringify(DEFAULT_THRESHOLDS));
-    showToast('Thresholds reset to default FDA pharmaceutical standards.');
+    void saveThresholds(DEFAULT_THRESHOLDS, 'Thresholds reset to the default risk bands.');
   };
 
-  const handleAddUser = (e: React.FormEvent) => {
+  const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUserName.trim() || !newUserEmail.trim()) return;
+    try {
+      const created = await api<ApiUser & { temporary_password?: string | null }>('/users', {
+        method: 'POST',
+        body: { name: newUserName.trim(), email: newUserEmail.trim(), role: newUserRole },
+      });
+      setUsers(prev => [toUserRecord(created), ...prev]);
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserRole('dispenser');
+      setShowAddUser(false);
+      if (created.temporary_password) {
+        setCredentialNotice(`${created.name} can sign in as ${created.email} with the temporary password ${created.temporary_password}. Share it privately; it is shown only once.`);
+      } else {
+        showToast(`Staff member ${created.name} added successfully.`);
+      }
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  };
 
-    const newUser: UserRecord = {
-      id: `u-${Date.now()}`,
-      name: newUserName.trim(),
-      email: newUserEmail.trim(),
-      role: newUserRole,
-      status: 'active',
-      lastActive: 'Never',
-    };
-
-    setUsers(prev => [newUser, ...prev]);
-    setNewUserName('');
-    setNewUserEmail('');
-    setNewUserRole('dispenser');
-    setShowAddUser(false);
-    showToast(`Staff member ${newUser.name} added successfully.`);
+  const patchUser = async (id: string, body: Record<string, unknown>, message: string) => {
+    try {
+      const updated = await api<ApiUser>(`/users/${id}`, { method: 'PATCH', body });
+      setUsers(prev => prev.map(u => (u.id === id ? toUserRecord(updated) : u)));
+      updateUserRole(updated.email, updated.role);
+      showToast(message);
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
   };
 
   const handleRoleChange = (id: string, newRole: 'admin' | 'dispenser') => {
-    const target = users.find(u => u.id === id);
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, role: newRole } : u));
-    if (target) updateUserRole(target.email, newRole);
-    showToast('User role updated.');
+    void patchUser(id, { role: newRole }, 'User role updated.');
   };
 
   const handleToggleStatus = (id: string) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id === id) {
-        const nextStatus = u.status === 'active' ? 'inactive' : 'active';
-        return { ...u, status: nextStatus };
-      }
-      return u;
-    }));
+    const target = users.find(u => u.id === id);
+    if (!target) return;
+    const activate = target.status !== 'active';
+    void patchUser(id, { is_active: activate }, activate ? 'User reactivated.' : 'User deactivated; they can no longer sign in.');
   };
 
-  const handleDeleteUser = (id: string, name: string) => {
-    if (confirm(`Remove user ${name}?`)) {
+  const handleDeleteUser = async (id: string, name: string) => {
+    if (!confirm(`Remove user ${name}?`)) return;
+    try {
+      await api(`/users/${id}`, { method: 'DELETE' });
       setUsers(prev => prev.filter(u => u.id !== id));
       showToast(`User ${name} removed.`);
+    } catch (err) {
+      showToast(errorMessage(err));
+    }
+  };
+
+  const handleSaveFacility = async () => {
+    try {
+      await api('/companies/me', {
+        method: 'PATCH',
+        body: { name: facilityName.trim() || undefined, license_number: licenseNumber.trim() || null, currency },
+      });
+      await refreshSettings();
+      showToast('Facility profile details updated.');
+    } catch (err) {
+      showToast(errorMessage(err));
     }
   };
 
@@ -519,8 +551,15 @@ export default function Settings() {
         </div>
 
         {/* Inline Add User Form */}
+        {credentialNotice && (
+          <div role="status" style={{ background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E', borderRadius: '12px', padding: '0.9rem 1.1rem', marginBottom: '1.25rem', fontSize: '0.84rem', display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
+            <span>{credentialNotice}</span>
+            <button type="button" onClick={() => setCredentialNotice(null)} style={{ background: 'none', border: 'none', color: 'inherit', fontWeight: 700, cursor: 'pointer' }}>Done</button>
+          </div>
+        )}
+
         {showAddUser && (
-          <form onSubmit={handleAddUser} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '1.25rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
+          <form onSubmit={e => void handleAddUser(e)} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '1.25rem', borderRadius: '12px', marginBottom: '1.5rem' }}>
             <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E3A4C', marginBottom: '1rem' }}>
               Invite Pharmacy Staff Member
             </h3>
@@ -647,7 +686,7 @@ export default function Settings() {
                     <button
                       type="button"
                       className="row-action-button"
-                      onClick={() => handleDeleteUser(u.id, u.name)}
+                      onClick={() => void handleDeleteUser(u.id, u.name)}
                       title="Remove user"
                     >
                       Remove
@@ -708,7 +747,7 @@ export default function Settings() {
 
         <button
           type="button"
-          onClick={() => showToast('Facility profile details updated.')}
+          onClick={() => void handleSaveFacility()}
           className="btn-secondary"
           style={{ padding: '0.55rem 1.25rem', fontSize: '0.85rem', fontWeight: 600 }}
         >

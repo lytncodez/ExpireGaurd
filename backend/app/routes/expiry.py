@@ -34,6 +34,8 @@ class ExpiryCheckResponse(BaseModel):
     alerts_auto_resolved: int
     sms_sent: int
     sms_failed: int
+    emails_sent: int = 0
+    emails_failed: int = 0
     new_alert_ids: list[str]
 
 

@@ -6,6 +6,7 @@ import { formatGhc } from '../utils/currency';
 import { useAuth } from '../api/useAuth';
 import { AlertWorkflowActions } from '../components/AlertWorkflowActions';
 import { Button } from '../components/ui/Button';
+import { daysToExpiry } from '../utils/risk';
 
 type AlertTab = 'All' | 'Critical' | 'Expiring Soon' | 'Expired' | 'Flagged Items' | 'Supplier Returns';
 
@@ -21,47 +22,45 @@ interface AlertsProps {
 export default function Alerts({ searchTerm = '' }: AlertsProps) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { items, acknowledgeItem, closeAdminFlag, processSupplierReturn } = useInventory();
-  const now = Date.now();
+  const { items, thresholds: t, acknowledgeItem, closeAdminFlag, processSupplierReturn } = useInventory();
 
   const [filterTab, setFilterTab] = useState<AlertTab>('All');
 
-  // Thresholds (90, 60, 30, 7 days, on-expiry)
+  // The pharmacy's risk bands (Settings), as used by the server.
   const thresholds = [
-    { label: 'Critical Window', days: 7, color: '#EF4444' },
-    { label: 'Action Required', days: 30, color: '#F97316' },
-    { label: 'Monitor Stage', days: 60, color: '#F59E0B' },
-    { label: 'Early Advisory', days: 90, color: '#3B3593' },
+    { label: 'Critical Window', days: t.criticalDays, color: '#EF4444' },
+    { label: 'Action Required', days: t.actionDays, color: '#F97316' },
+    { label: 'Monitor Stage', days: t.monitorDays, color: '#F59E0B' },
+    { label: 'Early Advisory', days: t.safeDays, color: '#3B3593' },
   ];
 
   // Process items into alert cards
   const alertsList = useMemo(() => {
     return (items || [])
       .map(item => {
-        const expTime = new Date(item.expiryDate).getTime();
-        const diffDays = Math.floor((expTime - now) / (1000 * 60 * 60 * 24));
+        const diffDays = daysToExpiry(item);
 
         let riskBand: 'Critical' | 'Expiring Soon' | 'Expired' | 'Safe' = 'Safe';
         let riskColor = '#10B981';
         let badgeBg = '#ECFDF5';
         let daysLabel = '';
 
-        if (diffDays < 0) {
+        if (diffDays <= 0) {
           riskBand = 'Expired';
           riskColor = '#64748B';
           badgeBg = '#F1F5F9';
-          daysLabel = `Expired ${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? '' : 's'} ago`;
-        } else if (diffDays <= 7) {
+          daysLabel = diffDays === 0 ? 'Expires today' : `Expired ${Math.abs(diffDays)} day${Math.abs(diffDays) === 1 ? '' : 's'} ago`;
+        } else if (diffDays <= t.criticalDays) {
           riskBand = 'Critical';
           riskColor = '#EF4444';
           badgeBg = '#FEF2F2';
           daysLabel = `${diffDays} day${diffDays === 1 ? '' : 's'} left`;
-        } else if (diffDays <= 30) {
+        } else if (diffDays <= t.actionDays) {
           riskBand = 'Expiring Soon';
           riskColor = '#F97316';
           badgeBg = '#FFF7ED';
           daysLabel = `${diffDays} days left`;
-        } else if (diffDays <= 90) {
+        } else if (diffDays <= t.safeDays) {
           riskBand = 'Expiring Soon';
           riskColor = '#F59E0B';
           badgeBg = '#FFFBEB';
@@ -93,7 +92,7 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
       })
       .filter(item => item.riskBand !== 'Safe' && item.status !== 'Disposed') // Only non-safe, undisposed batches generate active alerts
       .sort((a, b) => a.diffDays - b.diffDays);
-  }, [items, now]);
+  }, [items, t]);
 
   // Filter based on tab and optional search
   const filteredAlerts = useMemo(() => {
@@ -167,7 +166,7 @@ export default function Alerts({ searchTerm = '' }: AlertsProps) {
 
       <div className="stat-card-grid alerts-stat-grid" data-tour="alerts-summary">
         <StatCard label="Active Alerts" value={alertsList.length} context="Across all non-safe batches" icon={Bell} tone="navy" />
-        <StatCard label="Critical" value={alertsList.filter(alert => alert.riskBand === 'Critical').length} context="Expiring within 7 days" icon={AlertTriangle} tone="critical" />
+        <StatCard label="Critical" value={alertsList.filter(alert => alert.riskBand === 'Critical').length} context={`Expiring within ${t.criticalDays} days`} icon={AlertTriangle} tone="critical" />
         <StatCard label="Near Expiry" value={alertsList.filter(alert => alert.riskBand === 'Expiring Soon').length} context="Within the 90-day watch window" icon={Clock3} tone="monitor" />
         <StatCard label="Expired" value={alertsList.filter(alert => alert.riskBand === 'Expired').length} context="Requires quarantine or disposal" icon={ShieldAlert} tone="expired" />
       </div>

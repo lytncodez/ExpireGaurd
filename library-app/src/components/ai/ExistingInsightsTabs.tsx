@@ -11,66 +11,26 @@ export interface InsightItem {
   category: 'Trends' | 'Recommendations';
 }
 
-export const initialInsights: InsightItem[] = [
-  {
-    id: 'ins-1',
-    type: 'expiring',
-    title: 'Items Nearing Expiry Window',
-    tag: 'CRITICAL EXPIRY',
-    metric: '3 items expiring in ≤7 days (GH₵1,240.00 value)',
-    recommendation: 'Initiate priority FEFO dispensing or negotiate supplier credit return before Friday.',
-    severity: 'high',
-    category: 'Recommendations',
-  },
-  {
-    id: 'ins-2',
-    type: 'declining',
-    title: 'Declining Dispensing Velocity',
-    tag: 'SALES VELOCITY',
-    metric: 'Amoxicillin 500mg down 28% week-over-week',
-    recommendation: 'Pause next scheduled wholesale order to avoid accumulating surplus inventory on shelves.',
-    severity: 'medium',
-    category: 'Trends',
-  },
-  {
-    id: 'ins-3',
-    type: 'overstock',
-    title: 'High Stock vs. Low Turnover',
-    tag: 'CAPITAL ALLOCATION',
-    metric: 'Paracetamol Extra: 850 units with only 35 dispensed monthly',
-    recommendation: 'Reallocate 300 units to branch dispensaries or offer bulk clearance pricing.',
-    severity: 'medium',
-    category: 'Recommendations',
-  },
-  {
-    id: 'ins-4',
-    type: 'velocity',
-    title: 'Surge in Seasonal Antimalarial Demand',
-    tag: 'SEASONAL PATTERN',
-    metric: 'Artemether-Lumefantrine up 42% over past 14 days',
-    recommendation: 'Increase buffer stock by 100 units to avoid stockouts during peak rain season.',
-    severity: 'info',
-    category: 'Trends',
-  },
-  {
-    id: 'ins-5',
-    type: 'expiring',
-    title: 'Supplier Return Window Closing',
-    tag: 'RETURN CLAIMS',
-    metric: 'Ciprofloxacin Batch #CP-110 (22 days remaining to return cutoff)',
-    recommendation: 'Submit RMA return request to PharmaCorp Inc. to recoup 85% credit value.',
-    severity: 'high',
-    category: 'Recommendations',
-  },
-];
-
 interface ExistingInsightsTabsProps {
+  /** Real insights and recommendations from the backend (/insights, /insights/recommendations). */
+  insights: InsightItem[];
+  loading?: boolean;
+  error?: string | null;
+  generating?: boolean;
+  onGenerate?: () => void;
   onAskAIAboutInsight: (insight: InsightItem) => void;
 }
 
-export default function ExistingInsightsTabs({ onAskAIAboutInsight }: ExistingInsightsTabsProps) {
+export default function ExistingInsightsTabs({
+  insights,
+  loading = false,
+  error = null,
+  generating = false,
+  onGenerate,
+  onAskAIAboutInsight,
+}: ExistingInsightsTabsProps) {
   const [activeTab, setActiveTab] = useState<'Recommendations' | 'Trends'>('Recommendations');
-  const filteredList = initialInsights.filter(i => i.category === activeTab);
+  const filteredList = insights.filter(i => i.category === activeTab);
 
   return (
     <div style={{ marginTop: '1.5rem', marginBottom: '2rem' }}>
@@ -101,7 +61,7 @@ export default function ExistingInsightsTabs({ onAskAIAboutInsight }: ExistingIn
               transition: 'all 0.15s ease',
             }}
           >
-            Action Recommendations ({initialInsights.filter(i => i.category === 'Recommendations').length})
+            Action Recommendations ({insights.filter(i => i.category === 'Recommendations').length})
           </button>
           <button
             type="button"
@@ -118,13 +78,51 @@ export default function ExistingInsightsTabs({ onAskAIAboutInsight }: ExistingIn
               transition: 'all 0.15s ease',
             }}
           >
-            Inventory Trends ({initialInsights.filter(i => i.category === 'Trends').length})
+            Inventory Trends ({insights.filter(i => i.category === 'Trends').length})
           </button>
         </div>
       </div>
 
+      {onGenerate && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={generating}
+            style={{
+              background: '#FFFFFF',
+              color: '#3B3593',
+              border: '1px solid #D5DAF3',
+              borderRadius: '8px',
+              padding: '0.45rem 0.9rem',
+              fontSize: '0.76rem',
+              fontWeight: 800,
+              cursor: generating ? 'wait' : 'pointer',
+            }}
+          >
+            {generating ? 'Analysing stock…' : '↻ Refresh insights'}
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div role="alert" style={{ background: '#FEF2F2', color: '#991B1B', border: '1px solid #FCA5A5', borderRadius: '10px', padding: '0.75rem 1rem', fontSize: '0.8rem', fontWeight: 600, marginBottom: '0.85rem' }}>
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ fontSize: '0.82rem', color: '#64748B', padding: '1rem 0' }}>Loading insights from your stock data…</div>
+      ) : filteredList.length === 0 && !error ? (
+        <div style={{ fontSize: '0.82rem', color: '#64748B', background: '#FFFFFF', border: '1px dashed #CBD5E1', borderRadius: '12px', padding: '1rem 1.25rem' }}>
+          {activeTab === 'Trends'
+            ? 'No inventory trends yet. Click "Refresh insights" to analyse your current stock and sales.'
+            : 'No action recommendations right now. Nothing in your stock needs attention.'}
+        </div>
+      ) : null}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-        {filteredList.map(item => {
+        {!loading && filteredList.map(item => {
           let badgeColor = '#3B3593';
           let badgeBg = '#EEF0FD';
           let borderAccent = '#3B3593';

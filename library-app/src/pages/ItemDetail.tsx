@@ -8,30 +8,38 @@ import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
+import { daysToExpiry, riskBand, type RiskBand } from '../utils/risk';
 
-function getRisk(expiryDate: string, nowTimestamp: number): { label: string; badgeClass: string } {
-  const exp = new Date(expiryDate).getTime();
-  const diffDays = Math.floor((exp - nowTimestamp) / (1000 * 60 * 60 * 24));
-  if (diffDays < 0) return { label: 'Expired', badgeClass: 'risk-badge--expired' };
-  if (diffDays <= 7) return { label: 'Critical', badgeClass: 'risk-badge--critical' };
-  if (diffDays <= 30) return { label: 'Action Required', badgeClass: 'risk-badge--action' };
-  if (diffDays <= 60) return { label: 'Monitor', badgeClass: 'risk-badge--monitor' };
-  return { label: 'Safe', badgeClass: 'risk-badge--safe' };
-}
+const RISK_BADGES: Record<RiskBand, string> = {
+  Expired: 'risk-badge--expired',
+  Critical: 'risk-badge--critical',
+  'Action Required': 'risk-badge--action',
+  Monitor: 'risk-badge--monitor',
+  Safe: 'risk-badge--safe',
+};
 
 export default function ItemDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { items, deleteItem, updateItem, recordSale } = useInventory();
+  const { items, loading, thresholds, deleteItem, updateItem, recordSale } = useInventory();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [photoError, setPhotoError] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [saleQuantity, setSaleQuantity] = useState('');
   const [saleNotice, setSaleNotice] = useState('');
-  const nowTimestamp = Date.now();
 
   const item = items.find(i => i.id === id);
+
+  if (!item && loading) {
+    return (
+      <div className="page-body">
+        <Card className="card-container form-card" style={{ textAlign: 'center', padding: '3rem' }}>
+          <p style={{ color: 'var(--text-muted)' }}>Loading batch details...</p>
+        </Card>
+      </div>
+    );
+  }
 
   if (!item) {
     return (
@@ -51,14 +59,15 @@ export default function ItemDetail() {
     );
   }
 
-  const risk = getRisk(item.expiryDate, nowTimestamp);
-  const diffDays = Math.floor((new Date(item.expiryDate).getTime() - nowTimestamp) / (1000 * 60 * 60 * 24));
-  const totalValueAtRisk = diffDays <= 30 ? (item.quantity * item.unitPrice) : 0;
-  const canRecordSale = diffDays >= 0 && item.status !== 'Quarantined' && item.status !== 'Pending Return' && item.status !== 'Disposed' && item.quantity > 0;
+  const band = riskBand(item, thresholds);
+  const risk = { label: band, badgeClass: RISK_BADGES[band] };
+  const diffDays = daysToExpiry(item);
+  const totalValueAtRisk = diffDays <= thresholds.actionDays ? (item.quantity * item.unitPrice) : 0;
+  const canRecordSale = diffDays > 0 && item.status !== 'Quarantined' && item.status !== 'Pending Return' && item.status !== 'Disposed' && item.quantity > 0;
 
-  const handleDelete = () => {
-    deleteItem(item.id);
-    navigate('/inventory');
+  const handleDelete = async () => {
+    if (await deleteItem(item.id)) navigate('/inventory');
+    else setDeleteOpen(false);
   };
 
   const handleRecordSale = (event: FormEvent<HTMLFormElement>) => {
@@ -68,9 +77,14 @@ export default function ItemDetail() {
       setSaleNotice('Enter a whole number within the available stock.');
       return;
     }
-    recordSale(item.id, units);
-    setSaleNotice(`${units.toLocaleString()} units recorded as dispensed.`);
-    setSaleQuantity('');
+    void recordSale(item.id, units).then(ok => {
+      if (ok) {
+        setSaleNotice(`${units.toLocaleString()} units recorded as dispensed.`);
+        setSaleQuantity('');
+      } else {
+        setSaleNotice('The sale was not recorded. See the message at the top of the page.');
+      }
+    });
   };
 
   const handlePhotoUpload = (file?: File) => {
@@ -95,7 +109,7 @@ export default function ItemDetail() {
         return;
       }
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      updateItem(item.id, { photoUrl: canvas.toDataURL('image/jpeg', 0.82) });
+      void updateItem(item.id, { photoUrl: canvas.toDataURL('image/jpeg', 0.82) });
       URL.revokeObjectURL(imageUrl);
     };
     image.onerror = () => {
@@ -183,8 +197,8 @@ export default function ItemDetail() {
               </tr>
               <tr>
                 <td style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Time to Expiry</td>
-                <td style={{ fontWeight: 700, color: diffDays < 0 ? '#DC2626' : (diffDays <= 7 ? '#EF4444' : 'var(--text-main)') }}>
-                  {diffDays < 0 ? `Expired ${Math.abs(diffDays)} days ago` : `${diffDays} days remaining`}
+                <td style={{ fontWeight: 700, color: diffDays <= 0 ? '#DC2626' : (diffDays <= thresholds.criticalDays ? '#EF4444' : 'var(--text-main)') }}>
+                  {diffDays < 0 ? `Expired ${Math.abs(diffDays)} days ago` : diffDays === 0 ? 'Expires today' : `${diffDays} days remaining`}
                 </td>
               </tr>
               {isAdmin && <tr>

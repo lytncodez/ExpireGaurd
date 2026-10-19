@@ -2,13 +2,13 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, ShieldAlert } from 'lucide-react';
 import { useInventory } from '../api/useInventory';
-import type { InventoryItem } from '../api/mockData';
+import type { InventoryItem } from '../api/types';
 import { formatGhc } from '../utils/currency';
 import { useAuth } from '../api/useAuth';
 import { QuarantineActionButton } from '../components/QuarantineActionButton';
+import { daysToExpiry, riskBand, type RiskBand, type RiskThresholds } from '../utils/risk';
 
 type InventoryTab = 'all' | 'batch' | 'risk' | 'expired' | 'quarantined' | 'disposed';
-const dayMs = 24 * 60 * 60 * 1000;
 const tabs: { id: InventoryTab; label: string }[] = [
   { id: 'all', label: 'All Stock' },
   { id: 'batch', label: 'By Batch (FEFO View)' },
@@ -18,14 +18,18 @@ const tabs: { id: InventoryTab; label: string }[] = [
   { id: 'disposed', label: 'Disposed' },
 ];
 
-function getRisk(item: InventoryItem, now: number) {
-  const expiry = new Date(item.expiryDate || now).getTime();
-  const days = Math.floor((expiry - now) / dayMs);
-  if (days < 0) return { label: 'Expired', key: 'Expired', badge: 'risk-badge--expired', days };
-  if (days <= 7) return { label: 'Critical', key: 'Critical', badge: 'risk-badge--critical', days };
-  if (days <= 30) return { label: 'Action Required', key: 'Action Required', badge: 'risk-badge--action', days };
-  if (days <= 60) return { label: 'Monitor', key: 'Monitor', badge: 'risk-badge--monitor', days };
-  return { label: 'Safe', key: 'Safe', badge: 'risk-badge--safe', days };
+const RISK_BADGES: Record<RiskBand, string> = {
+  Expired: 'risk-badge--expired',
+  Critical: 'risk-badge--critical',
+  'Action Required': 'risk-badge--action',
+  Monitor: 'risk-badge--monitor',
+  Safe: 'risk-badge--safe',
+};
+
+/** Risk band and days left, as calculated by the server with the pharmacy's thresholds. */
+function getRisk(item: InventoryItem, thresholds: RiskThresholds) {
+  const key = riskBand(item, thresholds);
+  return { label: key, key, badge: RISK_BADGES[key], days: daysToExpiry(item) };
 }
 
 function formatDate(value?: string) {
@@ -37,18 +41,17 @@ function formatDate(value?: string) {
 export default function InventoryList({ searchTerm = '' }: { searchTerm?: string }) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { items, loading, error } = useInventory();
+  const { items, loading, error, thresholds } = useInventory();
   const [activeTab, setActiveTab] = useState<InventoryTab>('all');
   const [localSearch, setLocalSearch] = useState('');
   const [maxQuantity, setMaxQuantity] = useState('');
   const [maxExpiryDays, setMaxExpiryDays] = useState('');
-  const now = Date.now();
   const searchTerms = [searchTerm, localSearch].map(value => value.trim().toLowerCase()).filter(Boolean);
   const qtyLimit = maxQuantity === '' ? undefined : Number(maxQuantity);
   const expiryLimit = maxExpiryDays === '' ? undefined : Number(maxExpiryDays);
 
   const filteredItems = useMemo(() => (items || []).filter(item => {
-    const risk = getRisk(item, now);
+    const risk = getRisk(item, thresholds);
     const isQuarantined = item.status === 'Quarantined';
     if (activeTab === 'disposed' ? item.status !== 'Disposed' : item.status === 'Disposed') return false;
     if (activeTab === 'quarantined' ? !isQuarantined : activeTab !== 'expired' && isQuarantined) return false;
@@ -62,7 +65,7 @@ export default function InventoryList({ searchTerm = '' }: { searchTerm?: string
     if (qtyLimit !== undefined && Number.isFinite(qtyLimit) && item.quantity > qtyLimit) return false;
     if (expiryLimit !== undefined && Number.isFinite(expiryLimit) && risk.days > expiryLimit) return false;
     return true;
-  }), [items, activeTab, searchTerms.join('|'), qtyLimit, expiryLimit, now, isAdmin]);
+  }), [items, activeTab, searchTerms.join('|'), qtyLimit, expiryLimit, thresholds, isAdmin]);
 
   const visibleItems = useMemo(() => {
     if (activeTab !== 'batch') return filteredItems;
@@ -86,7 +89,7 @@ export default function InventoryList({ searchTerm = '' }: { searchTerm?: string
     </div>
 
     <div className="inventory-tabs" role="tablist" aria-label="Inventory views">
-      {tabs.map(tab => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={`inventory-tab${activeTab === tab.id ? ' is-active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}{tab.id === 'expired' && <span className="inventory-tab-count">{items.filter(item => getRisk(item, now).key === 'Expired' && item.status !== 'Disposed').length}</span>}{tab.id === 'quarantined' && <span className="inventory-tab-count">{items.filter(item => item.status === 'Quarantined').length}</span>}{tab.id === 'disposed' && <span className="inventory-tab-count">{items.filter(item => item.status === 'Disposed').length}</span>}</button>)}
+      {tabs.map(tab => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} className={`inventory-tab${activeTab === tab.id ? ' is-active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}{tab.id === 'expired' && <span className="inventory-tab-count">{items.filter(item => getRisk(item, thresholds).key === 'Expired' && item.status !== 'Disposed').length}</span>}{tab.id === 'quarantined' && <span className="inventory-tab-count">{items.filter(item => item.status === 'Quarantined').length}</span>}{tab.id === 'disposed' && <span className="inventory-tab-count">{items.filter(item => item.status === 'Disposed').length}</span>}</button>)}
     </div>
 
     <section className="card-container inventory-card">
@@ -104,7 +107,7 @@ export default function InventoryList({ searchTerm = '' }: { searchTerm?: string
         {visibleItems.length === 0 ? <div className="inventory-empty"><strong>No stock matches this view.</strong><span>Adjust the search or filters, or switch to another inventory tab.</span></div> : <table className="modern-table inventory-table">
           <thead><tr><th>Product &amp; Category</th><th>Batch &amp; Storage Location</th><th>Quantity</th><th>{isAdmin ? 'Unit Cost / Selling Price (GH₵)' : 'Selling Price (GH₵)'}</th><th>Manufacturing Date</th><th>Expiry Date</th>{isAdmin && <th>Supplier &amp; Date Received</th>}<th>Status</th>{activeTab === 'expired' && <th>Action</th>}</tr></thead>
           <tbody>{visibleItems.map(item => {
-            const risk = getRisk(item, now);
+            const risk = getRisk(item, thresholds);
             const expired = risk.key === 'Expired';
             const quarantined = item.status === 'Quarantined';
             const useFirst = activeTab === 'batch' && firstBatchByProduct.has(item.name) && visibleItems.find(row => row.name === item.name)?.id === item.id;

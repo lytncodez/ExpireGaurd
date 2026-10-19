@@ -1,11 +1,11 @@
 /**
- * AI Assistant Pipeline Service
- * Provides full conversational AI chat, structured stock queries,
- * Ghana seasonal purchase planning with cold-start detection,
- * and conversation persistence.
+ * AI Assistant service: talks to the ExpireGuard backend.
+ * Answers, seasonal plans and conversation history all come from the server
+ * (/ai/chat, /ai/conversations, /ai/seasonal-plan); nothing is computed or
+ * stored in the browser, so the AI uses the pharmacy's real data and API key.
  */
 
-import type { InventoryItem } from './mockData';
+import { api } from './client';
 
 export interface SeasonalProductItem {
   productId: string;
@@ -128,430 +128,196 @@ export const QUICK_PRESETS = [
   { label: 'Supplier review', prompt: 'Which suppliers send near-expiry stock and what returns are open?' },
 ];
 
-const STORAGE_KEY = 'expireguard_ai_conversations';
+// ─── Backend shapes (snake_case) ─────────────────────────────────────────────
 
-export function getSavedConversations(): Conversation[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+interface ApiSeasonalProduct {
+  product_id: string;
+  product: string;
+  current_stock: number;
+  recommended_order_qty: number;
+  sold_last_season: number;
+  sell_through_speed: string;
+  confidence: 'High' | 'Medium' | 'Low';
+  why: string;
+  cost_ghs: number;
+  cold_start: boolean;
 }
 
-export function saveConversations(convs: Conversation[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(convs));
-  } catch (err) {
-    console.error('Failed to save conversations to localStorage', err);
-  }
+interface ApiSeasonalCard {
+  season_name: string;
+  date_range: string;
+  products: ApiSeasonalProduct[];
+  estimated_total_cost_ghs: number;
+  disclaimer: string;
+  cold_start_note: string | null;
 }
 
-// ─── Ghana Seasonal Procurement Engine ───────────────────────────────────────
+interface ApiEvidence {
+  label: string;
+  value: unknown;
+  source: string;
+}
 
-export function generateSeasonalPlan(items: InventoryItem[], query: string): SeasonalCardData {
-  const q = query.toLowerCase();
-  let seasonName = 'Rainy Season (Major Peak)';
-  let dateRange = 'Apr to Jul';
-  let targetKeywords = ['malaria', 'artemether', 'lumefantrine', 'ors', 'amoxicillin', 'paracetamol', 'zinc'];
+interface ApiChatResponse {
+  conversation_id: string;
+  message_id: string;
+  intent: string;
+  answer: string;
+  evidence: ApiEvidence[];
+  insufficient_evidence: boolean;
+  follow_up_suggestions: string[];
+  grounded: boolean;
+  fallback_used: boolean;
+  provider: string;
+  model: string;
+  seasonal_card: ApiSeasonalCard | null;
+  data_sources_used: string[];
+  tools_invoked: string[];
+  charts: Record<string, unknown>[];
+}
 
-  if (q.includes('harmattan') || q.includes('dust') || q.includes('cold') || q.includes('december')) {
-    seasonName = 'Harmattan Season';
-    dateRange = 'Dec to Feb';
-    targetKeywords = ['cough', 'syrup', 'cetirizine', 'lozenge', 'eye drop', 'petroleum', 'menthol'];
-  } else if (q.includes('school') || q.includes('student') || q.includes('deworm') || q.includes('september')) {
-    seasonName = 'Back-to-School Resumption';
-    dateRange = 'Aug to Sep';
-    targetKeywords = ['vitamin', 'deworm', 'albendazole', 'multivitamin', 'bandage', 'plaster'];
-  }
+interface ApiConversation {
+  id: string;
+  title: string | null;
+  is_pinned: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
-  const products: SeasonalProductItem[] = [];
-  let totalCost = 0;
-  let hasColdStart = false;
+interface ApiMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
 
-  // Group items by product name
-  const byName = new Map<string, InventoryItem[]>();
-  items.forEach(it => {
-    const name = it.productName || it.name;
-    const existing = byName.get(name) || [];
-    existing.push(it);
-    byName.set(name, existing);
-  });
+// ─── Mapping helpers ─────────────────────────────────────────────────────────
 
-  // Pick seasonally relevant or representative products
-  let matched = Array.from(byName.entries()).filter(([name]) => 
-    targetKeywords.some(kw => name.toLowerCase().includes(kw))
+function timeLabel(iso?: string): string {
+  const d = iso ? new Date(iso) : new Date();
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+export function toSeasonalCard(card: ApiSeasonalCard | null | undefined): SeasonalCardData | undefined {
+  if (!card) return undefined;
+  return {
+    seasonName: card.season_name,
+    dateRange: card.date_range,
+    products: (card.products || []).map(p => ({
+      productId: p.product_id,
+      product: p.product,
+      currentStock: p.current_stock,
+      recommendedOrderQty: p.recommended_order_qty,
+      soldLastSeason: p.sold_last_season,
+      sellThroughSpeed: p.sell_through_speed,
+      confidence: p.confidence,
+      why: p.why,
+      costGhs: p.cost_ghs,
+      coldStart: p.cold_start,
+    })),
+    estimatedTotalCostGhs: card.estimated_total_cost_ghs,
+    disclaimer: card.disclaimer,
+    coldStartNote: card.cold_start_note ?? undefined,
+  };
+}
+
+/** Only well-formed charts are shown; anything else from the server is ignored. */
+function toCharts(charts: Record<string, unknown>[] | undefined): MiniChartData[] | undefined {
+  const valid = (charts || []).filter(
+    (c): c is Record<string, unknown> & MiniChartData =>
+      (c.type === 'bar' || c.type === 'line') && Array.isArray(c.labels) && Array.isArray(c.values) && typeof c.title === 'string',
   );
+  return valid.length ? valid : undefined;
+}
 
-  if (matched.length < 4) {
-    // Fill up to at least 5 products
-    const remaining = Array.from(byName.entries()).filter(([name]) => !matched.some(([m]) => m === name));
-    matched = [...matched, ...remaining.slice(0, 5 - matched.length)];
-  }
+function footnote(res: Pick<ApiChatResponse, 'insufficient_evidence' | 'fallback_used'>): string {
+  if (res.insufficient_evidence) return '\n\n_The data available is not enough to answer this fully._';
+  return '';
+}
 
-  matched.slice(0, 5).forEach(([name, batchList], idx) => {
-    const currentStock = batchList.reduce((acc, b) => acc + (b.quantity || 0), 0);
-    const unitCost = batchList[0]?.unitCostGhs || batchList[0]?.unitPrice || 15.0;
-    
-    // Simulate sales history check:
-    // If idx === 2 or 4, simulate a product with <12 months history (Cold Start)
-    const isColdStart = idx === 2 || name.toLowerCase().includes('rapid') || name.toLowerCase().includes('covid');
-    if (isColdStart) hasColdStart = true;
-
-    let recQty = 0;
-    let soldLast = 0;
-    let speed = 'Fast (18-24 days)';
-    let confidence: 'High' | 'Medium' | 'Low' = 'High';
-    let why = '';
-
-    if (isColdStart) {
-      confidence = 'Low';
-      soldLast = 0;
-      speed = 'Estimated (Moderate)';
-      recQty = 60; // Standard starter pack
-      why = `Assumption based on general Ghana ${seasonName} profile; shop has <12 months sales records for this product.`;
-    } else {
-      soldLast = Math.max(120, Math.round(currentStock * 1.6));
-      const needed = Math.max(0, soldLast * 1.25 - currentStock);
-      recQty = Math.ceil(needed / 10) * 10; // Rounded to packs of 10
-      if (recQty === 0) recQty = 80;
-      speed = currentStock > 300 ? 'Moderate (35-45 days)' : 'Fast (14-20 days)';
-      confidence = idx === 0 ? 'High' : 'Medium';
-      why = `Dispensed 3.2x faster during previous ${seasonName}; current usable stock covers only ${Math.round(currentStock / 15)} days.`;
-    }
-
-    const itemCost = Math.round(recQty * unitCost);
-    totalCost += itemCost;
-
-    products.push({
-      productId: batchList[0]?.id || `p-${idx}`,
-      product: name,
-      currentStock,
-      recommendedOrderQty: recQty,
-      soldLastSeason: soldLast,
-      sellThroughSpeed: speed,
-      confidence,
-      why,
-      costGhs: itemCost,
-      coldStart: isColdStart,
-    });
-  });
-
+function toConversation(c: ApiConversation, messages: ChatMessage[] = []): Conversation {
   return {
-    seasonName,
-    dateRange,
-    products,
-    estimatedTotalCostGhs: totalCost,
-    disclaimer: 'The AI only recommends. It never places orders automatically.',
-    coldStartNote: hasColdStart
-      ? 'Notice: Certain products lack 12+ months of recorded sales history. Recommendations marked "Low" reflect general Ghana seasonal demand assumptions rather than learned shop patterns.'
-      : undefined,
+    id: c.id,
+    title: c.title || 'New Conversation',
+    createdAt: c.created_at,
+    updatedAt: c.updated_at,
+    isPinned: c.is_pinned,
+    messages,
   };
 }
 
-// ─── Query Intent & Grounded Response Generator ───────────────────────────────
-
-export function answerGroundedQuery(query: string, items: InventoryItem[]): Omit<ChatMessage, 'id' | 'timestamp'> {
-  const q = query.toLowerCase().trim();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const now = Date.now();
-
-  // 1. Seasonal query
-  if (
-    q.includes('season') ||
-    q.includes('stock up') ||
-    q.includes('buying plan') ||
-    q.includes('what to order') ||
-    q.includes('what to buy')
-  ) {
-    const seasonalCard = generateSeasonalPlan(items, query);
-    const textLines = [
-      `### 📋 Seasonal Procurement Plan (${seasonalCard.seasonName})`,
-      '',
-      `Analysis based on verified stock quantities, dispensing velocity, and regional demand dynamics for **${seasonalCard.dateRange}**.`,
-      '',
-      `- **Target Season:** ${seasonalCard.seasonName} (${seasonalCard.dateRange})`,
-      `- **Estimated Procurement Budget:** **GH₵${seasonalCard.estimatedTotalCostGhs.toLocaleString('en-US', { minimumFractionDigits: 2 })}**`,
-      `- **Supplier Pack Sizing:** All recommendation orders are rounded to standard supplier wholesale pack multiples (10 units).`,
-      '',
-      seasonalCard.coldStartNote ? `> ⚠️ **Cold Start Disclosure:** ${seasonalCard.coldStartNote}` : '',
-      '',
-      'Review the itemized purchase table below. You can approve this as a draft order, adjust order quantities, or export directly to CSV.',
-    ].filter(Boolean);
-
-    return {
-      role: 'assistant',
-      content: textLines.join('\n'),
-      dataSourcesUsed: [
-        'Live Stock Ledger',
-        'FEFO Expiry Engine',
-        'Sales Outflow (365d)',
-        'Ghana Seasonal Demand Knowledge Base (RAG)',
-      ],
-      toolsInvoked: ['get_current_stock', 'compute_seasonal_plan', 'fefo_expiry_cross_check'],
-      seasonalCard,
-      followUpSuggestions: [
-        'What is expiring in the next 60 days?',
-        'Export seasonal order to CSV',
-        'Which suppliers have best pricing for these items?',
-        'How much stock value am I about to lose?',
-      ],
-    };
-  }
-
-  // 2. Near expiry query
-  if (q.includes('expir') || q.includes('60 days') || q.includes('spoil') || q.includes('shelf life')) {
-    const criticalLots = items.filter(it => {
-      const days = typeof it.daysToExpiry === 'number' ? it.daysToExpiry : Math.round((new Date(it.expiryDate).getTime() - now) / dayMs);
-      return days <= 60 && (it.quantity || 0) > 0;
-    });
-
-    const totalValue = criticalLots.reduce((acc, it) => acc + (it.quantity || 0) * (it.unitCostGhs || it.unitPrice || 0), 0);
-    const lines = [
-      `### ⏳ Near-Expiry Risk Analysis (Next 60 Days)`,
-      '',
-      `Identified **${criticalLots.length} active lots** approaching or within the critical expiry window, representing **GH₵${totalValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}** in total inventory cost value:`,
-      '',
-      '| Product | Batch # | Qty | Days Left | Cost Value | Recommended Action |',
-      '| :--- | :--- | :---: | :---: | :---: | :--- |',
-      ...criticalLots.slice(0, 6).map(it => {
-        const days = typeof it.daysToExpiry === 'number' ? it.daysToExpiry : Math.round((new Date(it.expiryDate).getTime() - now) / dayMs);
-        const costVal = (it.quantity || 0) * (it.unitCostGhs || it.unitPrice || 0);
-        return `| **${it.productName || it.name}** | \`${it.batchNumber || it.batchNo}\` | ${it.quantity} | **${days}d** | GH₵${costVal.toFixed(2)} | ${it.recommendedAction || 'FEFO priority'} |`;
-      }),
-      '',
-      `> 💡 **Immediate Recommendation:** Cross-check batches under 30 days against distributor RMA credit return terms before return cutoffs expire. Apply priority dispensing (FEFO) on sellable units.`,
-    ];
-
-    const chartData: MiniChartData = {
-      type: 'bar',
-      title: 'Stock Value at Expiry Risk by Product (GH₵)',
-      labels: criticalLots.slice(0, 5).map(it => (it.productName || it.name).split(' ')[0]),
-      values: criticalLots.slice(0, 5).map(it => Math.round((it.quantity || 0) * (it.unitCostGhs || it.unitPrice || 0))),
-      unit: 'GH₵',
-      color: '#EF4444',
-    };
-
-    return {
-      role: 'assistant',
-      content: lines.join('\n'),
-      dataSourcesUsed: ['Batches Table', 'Threshold Configuration (Accra TZ)', 'Product Cost Ledger'],
-      toolsInvoked: ['get_expiry_risks', 'get_current_stock'],
-      charts: [chartData],
-      followUpSuggestions: [
-        'Which suppliers send near-expiry stock?',
-        'What should I discount or sell first?',
-        'How much stock value am I about to lose?',
-      ],
-    };
-  }
-
-  // 3. Fastest sellers
-  if (q.includes('fast') || q.includes('sell fastest') || q.includes('top seller') || q.includes('velocity')) {
-    const fastItems = items.filter(it => it.velocity === 'Fast' || (it.quantity || 0) > 400).slice(0, 5);
-    const lines = [
-      `### ⚡ High Velocity Stock Lines`,
-      '',
-      `The following products demonstrate the highest dispensing turnover rate in your inventory:`,
-      '',
-      ...fastItems.map((it, idx) => 
-        `${idx + 1}. **${it.productName || it.name}**\n   - Current Sellable Units: **${it.quantity}**\n   - Velocity Classification: \`${it.velocity || 'Fast'}\`\n   - Unit Selling Price: **GH₵${(it.sellingPriceGhs || 25).toFixed(2)}**\n   - Stockout Runway: Estimated **18-22 days of cover**.`
-      ),
-      '',
-      `> 🛡️ **Stockout Prevention:** Maintain a minimum 20% safety buffer for these lines to prevent disruptions during peak dispensing hours.`,
-    ];
-
-    const chartData: MiniChartData = {
-      type: 'bar',
-      title: 'Fast-Moving Inventory Runway (Days of Cover)',
-      labels: fastItems.map(it => (it.productName || it.name).split(' ')[0]),
-      values: [18, 22, 16, 25, 20].slice(0, fastItems.length),
-      unit: 'days',
-      color: '#3B3593',
-    };
-
-    return {
-      role: 'assistant',
-      content: lines.join('\n'),
-      dataSourcesUsed: ['Dispensing Ledger', 'Product Inventory Table', 'Velocity Engine'],
-      toolsInvoked: ['get_sales_history', 'get_current_stock'],
-      charts: [chartData],
-      followUpSuggestions: [
-        'What should I stock up on this season?',
-        'What should I stop reordering?',
-        'Summarise this week’s activity',
-      ],
-    };
-  }
-
-  // 4. What to stop reordering / overstocked
-  if (q.includes('stop reordering') || q.includes('overstock') || q.includes('slow mover') || q.includes('dead stock')) {
-    const slowItems = items.filter(it => it.velocity === 'Slow' || it.velocity === 'Dead' || (it.quantity || 0) > 600).slice(0, 4);
-    const lines = [
-      `### 🛑 Overstocked & Slow-Moving Stock Lines (Pause Reorders)`,
-      '',
-      `The following lines have excess inventory relative to current customer demand. Reorders should be paused immediately:`,
-      '',
-      '| Product | In Stock | Turnover Pace | Days of Cover | Recommendation |',
-      '| :--- | :---: | :---: | :---: | :--- |',
-      ...slowItems.map(it => 
-        `| **${it.productName || it.name}** | ${it.quantity} | \`${it.velocity || 'Slow'}\` | **120+ days** | Pause purchase orders; consider branch re-allocation |`
-      ),
-      '',
-      `> 💡 **Capital Optimization:** Delaying replenishment on these items frees approximately **GH₵${slowItems.reduce((acc, it) => acc + (it.quantity || 0) * (it.unitCostGhs || 10), 0).toLocaleString()}** in working capital.`,
-    ];
-
-    return {
-      role: 'assistant',
-      content: lines.join('\n'),
-      dataSourcesUsed: ['Inventory Ledger', 'Product Turnover Analytics', 'Days of Cover Model'],
-      toolsInvoked: ['get_current_stock', 'get_sales_history'],
-      followUpSuggestions: [
-        'What should I discount or sell first?',
-        'What should I stock up on this season?',
-        'Which products sell fastest right now?',
-      ],
-    };
-  }
-
-  // 5. Supplier audit
-  if (q.includes('supplier') || q.includes('vendor') || q.includes('distributor')) {
-    const lines = [
-      `### 🚚 Supplier Performance & Short-Dated Delivery Audit`,
-      '',
-      `Comprehensive review of primary pharmaceutical wholesalers based on batch receipt logs:`,
-      '',
-      `- **PharmaCorp Inc.** (Primary Distributor):`,
-      `  - Batches received: **6 lots**`,
-      `  - Average shelf-life on arrival: **16.5 months** (Within standard SLA)`,
-      `  - Open return requests: **1 pending RMA** (Amoxicillin Batch #AMX-2026-08)`,
-      `- **MediSupply Co.**:`,
-      `  - 1 lot expired in quarantine (Aspirin #ASP-1049-B, GH₵1,050.00 value)`,
-      `  - Action: Follow up on distributor credit note voucher.`,
-      `- **BioDiagnostics Tech**:`,
-      `  - Rapid test kits delivered with short 6-month shelf life. Flagged for delivery SLA review.`,
-      '',
-      `> 📌 **Compliance Note:** Return claim notices must be submitted at least 60 days before batch expiry cutoff.`,
-    ];
-
-    return {
-      role: 'assistant',
-      content: lines.join('\n'),
-      dataSourcesUsed: ['Batches Receiving Log', 'Supplier Registry', 'Disposal & RMA Workflow'],
-      toolsInvoked: ['get_supplier_history', 'get_expiry_risks'],
-      followUpSuggestions: [
-        'What is expiring in the next 60 days?',
-        'What should I stop reordering?',
-        'How much stock value am I about to lose?',
-      ],
-    };
-  }
-
-  // 6. Stock value at risk
-  if (q.includes('value am i about to lose') || q.includes('value at risk') || q.includes('loss') || q.includes('cost of expired')) {
-    const expiredOrCrit = items.filter(it => (it.daysToExpiry || 0) <= 30 && (it.quantity || 0) > 0);
-    const totalCost = expiredOrCrit.reduce((acc, it) => acc + (it.quantity || 0) * (it.unitCostGhs || it.unitPrice || 0), 0);
-
-    const lines = [
-      `### 💰 Stock Value at Risk Quantification`,
-      '',
-      `Based on current batch valuations at cost:`,
-      '',
-      `- **Immediate Critical Risk (≤30 days):** **GH₵${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}**`,
-      `- **Affected Batches:** **${expiredOrCrit.length} distinct product lots**`,
-      `- **Potential Salvage via Supplier Returns:** Approximately **GH₵${(totalCost * 0.75).toLocaleString('en-US', { minimumFractionDigits: 2 })}** (75% recoverable if RMA submitted promptly).`,
-      '',
-      'Prioritize FEFO dispensing immediately to protect your inventory margins.',
-    ];
-
-    return {
-      role: 'assistant',
-      content: lines.join('\n'),
-      dataSourcesUsed: ['Live Batches Valuation', 'Product Cost Index', 'Expiry Thresholds'],
-      toolsInvoked: ['get_expiry_risks', 'get_current_stock'],
-      followUpSuggestions: [
-        'What should I discount or sell first?',
-        'Which suppliers send near-expiry stock?',
-        'What should I stock up on this season?',
-      ],
-    };
-  }
-
-  // 7. Summary / Weekly activity
-  if (q.includes('summar') || q.includes('week') || q.includes('daily') || q.includes('activity')) {
-    const totalUnits = items.reduce((acc, it) => acc + (it.quantity || 0), 0);
-    const totalVal = items.reduce((acc, it) => acc + (it.quantity || 0) * (it.unitCostGhs || it.unitPrice || 0), 0);
-    const critCount = items.filter(it => (it.daysToExpiry || 0) <= 30 && (it.quantity || 0) > 0).length;
-
-    const lines = [
-      `### 📊 Pharmacy Operational Summary`,
-      '',
-      `Comprehensive overview for **My Pharmacy (Accra, GH₵)**:`,
-      '',
-      `- **Total In-Stock Units:** **${totalUnits.toLocaleString()} units** across **${items.length} items**`,
-      `- **Total Valuation at Cost:** **GH₵${totalVal.toLocaleString('en-US', { minimumFractionDigits: 2 })}**`,
-      `- **Critical & Urgent Batches:** **${critCount} lots** requiring supervisor review`,
-      `- **Dispensing Health Index:** **92.4%** compliant with FEFO shelf rotation guidelines`,
-      '',
-      `> ✨ **Admin Directive:** Review seasonal replenishment for antimalarials and verify supplier return credits before Friday.`,
-    ];
-
-    return {
-      role: 'assistant',
-      content: lines.join('\n'),
-      dataSourcesUsed: ['Inventory Ledger', 'FEFO Health Engine', 'Alert Audit Ledger'],
-      toolsInvoked: ['get_current_stock', 'get_expiry_risks', 'get_sales_history'],
-      followUpSuggestions: [
-        'What should I stock up on this season?',
-        'What is expiring in the next 60 days?',
-        'Which products sell fastest right now?',
-      ],
-    };
-  }
-
-  // 8. Discount & Sell First
-  if (q.includes('discount') || q.includes('sell first') || q.includes('clearance') || q.includes('promo')) {
-    const promoItems = items.filter(it => (it.daysToExpiry || 0) > 0 && (it.daysToExpiry || 0) <= 45).slice(0, 4);
-    const lines = [
-      `### 🏷️ FEFO Clearance & Discount Recommendations`,
-      '',
-      `The following batches have ample sellable quality but short remaining shelf-life. Apply promotional discounts or position at front-of-counter:`,
-      '',
-      '| Product | Batch | Days Remaining | Suggested Markdown | Target Liquidation |',
-      '| :--- | :--- | :---: | :---: | :--- |',
-      ...promoItems.map(it => 
-        `| **${it.productName || it.name}** | \`${it.batchNumber || it.batchNo}\` | **${it.daysToExpiry}d** | **15% - 25% OFF** | Move to primary dispensing counter |`
-      ),
-      '',
-      `> 💡 Fast liquidation on these items will recover cash flow before reaching FDA Ghana unsellable thresholds.`,
-    ];
-
-    return {
-      role: 'assistant',
-      content: lines.join('\n'),
-      dataSourcesUsed: ['FEFO Shelf Life Matrix', 'Current Retail Price Index'],
-      toolsInvoked: ['get_expiry_risks', 'get_current_stock'],
-      followUpSuggestions: [
-        'How much stock value am I about to lose?',
-        'What is expiring in the next 60 days?',
-        'What should I stock up on this season?',
-      ],
-    };
-  }
-
-  // Fallback / General
-  const totalUnits = items.reduce((acc, it) => acc + (it.quantity || 0), 0);
+function fromStoredMessage(m: ApiMessage): ChatMessage {
+  const meta = m.metadata || {};
   return {
-    role: 'assistant',
-    content: `I've analyzed your pharmacy stock of **${totalUnits.toLocaleString()} units** across **${items.length} products**.\n\nI can assist you with:\n- **Seasonal purchase recommendations** (Ghana rainy, harmattan, or back-to-school buying plans)\n- **Near-expiry runouts** (batches expiring in ≤60 days)\n- **Velocity rankings** (fast movers, slow movers, and overstocked lines)\n- **Supplier performance & RMA return claims**\n- **Stock value at risk and FEFO clearance pricing**\n\nHow would you like to proceed?`,
-    dataSourcesUsed: ['Verified Inventory Ledger', 'FEFO Engine'],
-    toolsInvoked: ['get_current_stock'],
-    followUpSuggestions: [
-      'What should I stock up on this season?',
-      'What is expiring in the next 60 days?',
-      'Which products sell fastest right now?',
-      'What should I stop reordering?',
-    ],
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    timestamp: timeLabel(m.created_at),
+    evidence: Array.isArray(meta.evidence) ? (meta.evidence as ChatMessage['evidence']) : undefined,
+    dataSourcesUsed: Array.isArray(meta.data_sources_used) ? (meta.data_sources_used as string[]) : undefined,
+    toolsInvoked: Array.isArray(meta.tools_invoked) ? (meta.tools_invoked as string[]) : undefined,
+    seasonalCard: toSeasonalCard(meta.seasonal_card as ApiSeasonalCard | null | undefined),
+    followUpSuggestions: Array.isArray(meta.follow_up_suggestions) ? (meta.follow_up_suggestions as string[]) : undefined,
   };
+}
+
+// ─── API calls ───────────────────────────────────────────────────────────────
+
+export interface ChatResult {
+  conversationId: string;
+  message: ChatMessage;
+}
+
+/** Sends a question to the backend AI. Omit conversationId to start a new conversation. */
+export async function sendChatMessage(message: string, conversationId?: string | null): Promise<ChatResult> {
+  const res = await api<ApiChatResponse>('/ai/chat', {
+    method: 'POST',
+    body: { message, conversation_id: conversationId || undefined },
+  });
+  return {
+    conversationId: res.conversation_id,
+    message: {
+      id: res.message_id,
+      role: 'assistant',
+      content: res.answer + footnote(res),
+      timestamp: timeLabel(),
+      evidence: res.evidence.map(e => ({ label: e.label, value: e.value, source: e.source })),
+      dataSourcesUsed: res.data_sources_used,
+      toolsInvoked: res.tools_invoked,
+      seasonalCard: toSeasonalCard(res.seasonal_card),
+      charts: toCharts(res.charts),
+      followUpSuggestions: res.follow_up_suggestions,
+    },
+  };
+}
+
+export async function listConversations(): Promise<Conversation[]> {
+  const page = await api<{ items: ApiConversation[] }>('/ai/conversations?page_size=50');
+  return page.items.map(c => toConversation(c));
+}
+
+export async function loadConversation(id: string): Promise<Conversation> {
+  const detail = await api<ApiConversation & { messages: ApiMessage[] }>(`/ai/conversations/${id}`);
+  const messages = [...detail.messages]
+    // A question and its answer are saved together and can share a timestamp: question first.
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || (a.role === b.role ? 0 : a.role === 'user' ? -1 : 1))
+    .map(fromStoredMessage);
+  return toConversation(detail, messages);
+}
+
+export async function updateConversation(id: string, changes: { title?: string; isPinned?: boolean }): Promise<void> {
+  await api(`/ai/conversations/${id}`, {
+    method: 'PATCH',
+    body: { title: changes.title, is_pinned: changes.isPinned },
+  });
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await api(`/ai/conversations/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchSeasonalPlan(season?: 'RAINY' | 'HARMATTAN' | 'BACK_TO_SCHOOL'): Promise<SeasonalCardData | undefined> {
+  const query = season ? `?season=${season}` : '';
+  return toSeasonalCard(await api<ApiSeasonalCard>(`/ai/seasonal-plan${query}`, { method: 'POST' }));
 }

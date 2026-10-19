@@ -10,6 +10,7 @@ export default function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [devToken, setDevToken] = useState<string | undefined>();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -26,6 +27,7 @@ export default function ForgotPassword() {
 
     const result = await forgotPassword(email);
     if (result.success) {
+      setDevToken(result.resetToken);
       setSubmitted(true);
     } else {
       setError(result.error || 'Something went wrong. Please try again.');
@@ -60,7 +62,7 @@ export default function ForgotPassword() {
             <>
               <div className="auth-form-header">
                 <h2 className="auth-form-title">Reset your password</h2>
-                <p className="auth-form-sub">Enter your email and we'll send you recovery instructions.</p>
+                <p className="auth-form-sub">Enter your email and we'll send a reset code to the phone number on your account.</p>
               </div>
 
               {error && (
@@ -92,7 +94,7 @@ export default function ForgotPassword() {
                   disabled={isLoading}
                   id="reset-submit-btn"
                 >
-                  {isLoading ? 'Sending instructions...' : 'Send Reset Link'}
+                  {isLoading ? 'Sending code...' : 'Send Reset Code'}
                 </button>
               </form>
 
@@ -118,11 +120,24 @@ export default function ForgotPassword() {
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               </div>
-              <h2 className="auth-form-title" style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Check your inbox</h2>
+              <h2 className="auth-form-title" style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Check your phone</h2>
               <p className="auth-form-sub" style={{ marginBottom: '1.75rem' }}>
-                We've sent password reset instructions to <strong>{email}</strong>.
+                If <strong>{email}</strong> has an account with a phone number, a reset code has been sent by SMS.
+                No phone on the account? Ask your pharmacy admin to reset it.
               </p>
-              <Link to="/signin" className="auth-submit-btn" style={{ display: 'block', textDecoration: 'none', textAlign: 'center' }}>
+              {devToken && (
+                <p className="auth-form-sub" style={{ marginBottom: '1rem', fontSize: '0.8rem' }}>
+                  Development mode: the server returned the code directly.
+                </p>
+              )}
+              <Link
+                to={devToken ? `/reset-password?token=${encodeURIComponent(devToken)}` : '/reset-password'}
+                className="auth-submit-btn"
+                style={{ display: 'block', textDecoration: 'none', textAlign: 'center', marginBottom: '0.75rem' }}
+              >
+                Enter reset code
+              </Link>
+              <Link to="/signin" style={{ display: 'block', textAlign: 'center' }}>
                 Return to Sign In
               </Link>
             </div>

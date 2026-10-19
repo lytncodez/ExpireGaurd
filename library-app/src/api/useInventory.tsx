@@ -1,235 +1,210 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { mockItems, type InventoryActivity, type InventoryItem, type WorkflowReason } from './mockData';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { api, errorMessage } from './client';
+import type { InventoryItem, WorkflowReason } from './types';
 import { useAuth } from './useAuth';
+import { DEFAULT_THRESHOLDS, type RiskThresholds } from '../utils/risk';
+
+export interface PharmacySettings extends RiskThresholds {
+  enable90d: boolean;
+  enable60d: boolean;
+  enable30d: boolean;
+  enable7d: boolean;
+  enable0d: boolean;
+  pharmacyName: string;
+  licenseNumber: string | null;
+  currency: string;
+  timezone: string;
+  lowStockThreshold: number;
+}
 
 interface InventoryContextType {
   items: InventoryItem[];
   loading: boolean;
+  /** Problem loading the list (shown on the inventory page). */
   error: string | null;
-  addItem: (item: Omit<InventoryItem, 'id'>) => void;
-  deleteItem: (id: string) => void;
-  updateItem: (id: string, updates: Partial<InventoryItem>) => void;
-  acknowledgeItem: (id: string) => void;
-  flagItemForReview: (id: string, note: string) => void;
-  closeAdminFlag: (id: string, status: 'resolved' | 'dismissed', note?: string) => void;
-  quarantineItem: (id: string, reason: WorkflowReason) => void;
-  addItemNote: (id: string, note: string) => void;
-  requestSupplierReturn: (id: string, note?: string) => void;
-  processSupplierReturn: (id: string) => void;
-  disposeItem: (id: string, reason: WorkflowReason, note?: string) => void;
-  recordSale: (id: string, units: number) => void;
-  resetToMock: () => void;
+  /** Last failed action (shown as a dismissible banner). */
+  actionError: string | null;
+  clearActionError: () => void;
+  settings: PharmacySettings | null;
+  thresholds: RiskThresholds;
+  refresh: () => Promise<void>;
+  refreshSettings: () => Promise<void>;
+  addItem: (item: Omit<InventoryItem, 'id'>) => Promise<InventoryItem | null>;
+  deleteItem: (id: string) => Promise<boolean>;
+  updateItem: (id: string, updates: Partial<InventoryItem>) => Promise<void>;
+  acknowledgeItem: (id: string) => Promise<void>;
+  flagItemForReview: (id: string, note: string) => Promise<void>;
+  closeAdminFlag: (id: string, status: 'resolved' | 'dismissed', note?: string) => Promise<void>;
+  quarantineItem: (id: string, reason: WorkflowReason) => Promise<void>;
+  addItemNote: (id: string, note: string) => Promise<void>;
+  requestSupplierReturn: (id: string, note?: string) => Promise<void>;
+  processSupplierReturn: (id: string) => Promise<void>;
+  disposeItem: (id: string, reason: WorkflowReason, note?: string) => Promise<void>;
+  recordSale: (id: string, units: number) => Promise<boolean>;
 }
 
 const InventoryContext = createContext<InventoryContextType | undefined>(undefined);
 
-function sanitizeItems(parsed: any[]): InventoryItem[] {
-  if (!Array.isArray(parsed) || parsed.length === 0) return mockItems;
-  return parsed.map((item, idx) => ({
-    id: String(item.id || `item-${idx}`),
-    name: String(item.name || item.productName || 'Unnamed Product'),
-    productName: String(item.productName || item.name || 'Unnamed Product'),
-    category: String(item.category || 'General'),
-    batchNo: String(item.batchNo || item.batchNumber || `BATCH-${1000 + idx}`),
-    batchNumber: String(item.batchNumber || item.batchNo || `BATCH-${1000 + idx}`),
-    quantity: typeof item.quantity === 'number' && !isNaN(item.quantity) ? item.quantity : 0,
-    unitsSold: typeof item.unitsSold === 'number' && Number.isFinite(item.unitsSold) ? Math.max(0, item.unitsSold) : undefined,
-    unitPrice: typeof item.unitPrice === 'number' && !isNaN(item.unitPrice) ? item.unitPrice : (typeof item.unitCostGhs === 'number' ? item.unitCostGhs : 10.0),
-    unitCostGhs: typeof item.unitCostGhs === 'number' && !isNaN(item.unitCostGhs) ? item.unitCostGhs : (typeof item.unitPrice === 'number' ? item.unitPrice : 10.0),
-    sellingPriceGhs: typeof item.sellingPriceGhs === 'number' && !isNaN(item.sellingPriceGhs) ? item.sellingPriceGhs : undefined,
-    expiryDate: item.expiryDate || new Date().toISOString(),
-    manufacturingDate: item.manufacturingDate || undefined,
-    dateReceived: item.dateReceived || undefined,
-    photoUrl: typeof item.photoUrl === 'string' ? item.photoUrl : undefined,
-    daysToExpiry: typeof item.daysToExpiry === 'number' ? item.daysToExpiry : undefined,
-    supplier: String(item.supplier || 'PharmaCorp Inc.'),
-    location: String(item.location || item.storageLocation || 'Aisle A1 - Shelf 1'),
-    storageLocation: String(item.storageLocation || item.location || 'Aisle A1 - Shelf 1'),
-    status: item.status || 'In Stock',
-    riskStatus: item.riskStatus || undefined,
-    recommendedAction: item.recommendedAction || 'Review stock rotation',
-    velocity: item.velocity || 'Moderate',
-    acknowledged: item.acknowledged && typeof item.acknowledged.at === 'string' ? item.acknowledged : undefined,
-    activityLog: Array.isArray(item.activityLog) ? item.activityLog.filter((entry: unknown) => entry && typeof entry === 'object') as InventoryActivity[] : [],
-    adminFlag: item.adminFlag && typeof item.adminFlag.at === 'string' ? item.adminFlag : undefined,
-    supplierReturnRequest: item.supplierReturnRequest && typeof item.supplierReturnRequest.requestedAt === 'string' ? item.supplierReturnRequest : undefined,
-    quarantineReason: item.quarantineReason,
-    disposal: item.disposal && typeof item.disposal.at === 'string' ? item.disposal : undefined,
-  }));
+/** The API sends null for absent/hidden fields; the UI treats them as undefined. */
+function normalize(raw: Record<string, unknown>): InventoryItem {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value !== null) out[key] = value;
+  }
+  return out as unknown as InventoryItem;
 }
 
 export function InventoryProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const [items, setItems] = useState<InventoryItem[]>(() => {
-    const saved = localStorage.getItem('expireguard_items');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return sanitizeItems(parsed);
-      } catch {
-        return mockItems;
-      }
-    }
-    return mockItems;
-  });
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<PharmacySettings | null>(null);
 
-  const [loading] = useState(false);
-  const [error] = useState<string | null>(null);
-
-  useEffect(() => {
+  const refresh = useCallback(async () => {
+    setLoading(true);
     try {
-      localStorage.setItem('expireguard_items', JSON.stringify(items));
-    } catch (e) {
-      console.error('Failed to persist inventory data to localStorage', e);
+      const data = await api<Record<string, unknown>[]>('/items');
+      setItems(data.map(normalize));
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
     }
-  }, [items]);
+  }, []);
 
-  const addItem = (item: Omit<InventoryItem, 'id'>) => {
-    const entry = user?.role === 'admin' ? item : {
-      ...item,
-      unitPrice: 0,
-      unitCostGhs: undefined,
-      supplier: undefined,
-      dateReceived: undefined,
-    };
-    const newItem: InventoryItem = {
-      id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      ...entry,
-    };
-    setItems(prev => [newItem, ...prev]);
+  const refreshSettings = useCallback(async () => {
+    try {
+      setSettings(await api<PharmacySettings>('/settings'));
+    } catch {
+      /* keep defaults; the inventory itself still carries server-computed risk bands */
+    }
+  }, []);
+
+  // Load when someone signs in; clear everything on sign-out.
+  useEffect(() => {
+    if (user?.id) {
+      void refresh();
+      void refreshSettings();
+    } else {
+      setItems([]);
+      setSettings(null);
+      setError(null);
+    }
+  }, [user?.id, user?.role, refresh, refreshSettings]);
+
+  const replace = (updated: Record<string, unknown>) => {
+    const item = normalize(updated);
+    setItems(prev => {
+      const exists = prev.some(i => i.id === item.id);
+      return exists ? prev.map(i => (i.id === item.id ? item : i)) : [item, ...prev];
+    });
+    return item;
   };
 
-  const deleteItem = (id: string) => {
-    if (user?.role !== 'admin') return;
-    setItems(prev => prev.filter(item => item.id !== id));
+  /** Runs an item action; on success swaps in the server's copy of the item, on failure shows the reason. */
+  const act = async (id: string, path: string, body?: unknown): Promise<boolean> => {
+    try {
+      replace(await api<Record<string, unknown>>(`/items/${id}${path}`, { method: 'POST', body: body ?? {} }));
+      setActionError(null);
+      return true;
+    } catch (err) {
+      setActionError(errorMessage(err));
+      return false;
+    }
   };
 
-  const updateItem = (id: string, updates: Partial<InventoryItem>) => {
-    setItems(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
+  const addItem = async (item: Omit<InventoryItem, 'id'>): Promise<InventoryItem | null> => {
+    try {
+      const created = await api<Record<string, unknown>>('/items', {
+        method: 'POST',
+        body: {
+          name: item.name,
+          category: item.category,
+          batchNo: item.batchNo || undefined,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice || undefined,
+          unitCostGhs: item.unitCostGhs,
+          sellingPriceGhs: item.sellingPriceGhs,
+          expiryDate: item.expiryDate,
+          manufacturingDate: item.manufacturingDate || undefined,
+          dateReceived: item.dateReceived || undefined,
+          supplier: item.supplier,
+          location: item.location ?? item.storageLocation,
+          status: item.status === 'Low Stock' ? undefined : item.status,
+          barcode: item.barcode || undefined,
+          sku: item.sku || undefined,
+        },
+      });
+      setActionError(null);
+      return replace(created);
+    } catch (err) {
+      setActionError(errorMessage(err));
+      return null;
+    }
   };
 
-  const addActivity = (id: string, action: string, note?: string, updates: Partial<InventoryItem> = {}) => {
-    const actor = { actorId: user?.id ?? 'unknown', actorName: user?.name ?? 'Staff member' };
-    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action, ...actor, at: new Date().toISOString(), ...(note ? { note } : {}) };
-    setItems(prev => prev.map(item => item.id === id ? { ...item, ...updates, activityLog: [...(item.activityLog ?? []), activity] } : item));
+  const deleteItem = async (id: string): Promise<boolean> => {
+    try {
+      await api(`/items/${id}`, { method: 'DELETE' });
+      setItems(prev => prev.filter(item => item.id !== id));
+      setActionError(null);
+      return true;
+    } catch (err) {
+      setActionError(errorMessage(err));
+      return false;
+    }
   };
 
-  const acknowledgeItem = (id: string) => {
-    if (!user) return;
-    const at = new Date().toISOString();
-    addActivity(id, 'Acknowledged expiry alert', undefined, { acknowledged: { actorId: user.id, actorName: user.name, at } });
+  const updateItem = async (id: string, updates: Partial<InventoryItem>) => {
+    const body: Record<string, unknown> = {};
+    if ('photoUrl' in updates) body.photoUrl = updates.photoUrl ?? null;
+    if ('location' in updates || 'storageLocation' in updates) body.location = updates.location ?? updates.storageLocation ?? null;
+    for (const key of ['name', 'category', 'supplier', 'unitCostGhs', 'sellingPriceGhs', 'expiryDate', 'manufacturingDate'] as const) {
+      if (key in updates) body[key] = updates[key];
+    }
+    try {
+      replace(await api<Record<string, unknown>>(`/items/${id}`, { method: 'PATCH', body }));
+      setActionError(null);
+    } catch (err) {
+      setActionError(errorMessage(err));
+    }
   };
 
-  const flagItemForReview = (id: string, note: string) => {
-    if (!user) return;
-    const at = new Date().toISOString();
-    addActivity(id, 'Flagged for Admin Review', note, { adminFlag: { status: 'open', note, actorId: user.id, actorName: user.name, at } });
+  const thresholds = useMemo<RiskThresholds>(() => (settings ? {
+    criticalDays: settings.criticalDays,
+    actionDays: settings.actionDays,
+    monitorDays: settings.monitorDays,
+    safeDays: settings.safeDays,
+  } : DEFAULT_THRESHOLDS), [settings]);
+
+  const value: InventoryContextType = {
+    items,
+    loading,
+    error,
+    actionError,
+    clearActionError: () => setActionError(null),
+    settings,
+    thresholds,
+    refresh,
+    refreshSettings,
+    addItem,
+    deleteItem,
+    updateItem,
+    acknowledgeItem: async id => { await act(id, '/acknowledge'); },
+    flagItemForReview: async (id, note) => { await act(id, '/flag', { note }); },
+    closeAdminFlag: async (id, status, note = '') => { await act(id, '/flag/close', { status, note: note || undefined }); },
+    quarantineItem: async (id, reason) => { await act(id, '/quarantine', { reason }); },
+    addItemNote: async (id, note) => { if (note.trim()) await act(id, '/notes', { note: note.trim() }); },
+    requestSupplierReturn: async (id, note = '') => { await act(id, '/return-request', { note: note.trim() || undefined }); },
+    processSupplierReturn: async id => { await act(id, '/return-process'); },
+    disposeItem: async (id, reason, note = '') => { await act(id, '/dispose', { reason, note: note.trim() || undefined }); },
+    recordSale: async (id, units) => (Number.isInteger(units) && units > 0 ? act(id, '/sell', { units }) : false),
   };
 
-  const closeAdminFlag = (id: string, status: 'resolved' | 'dismissed', note = '') => {
-    if (user?.role !== 'admin') return;
-    const at = new Date().toISOString();
-    const action = status === 'resolved' ? 'Resolved Admin Review flag' : 'Dismissed Admin Review flag';
-    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action, actorId: user.id, actorName: user.name, at, ...(note ? { note } : {}) };
-    setItems(prev => prev.map(item => item.id === id ? {
-      ...item,
-      adminFlag: item.adminFlag ? { ...item.adminFlag, status, closedBy: user.name, closedAt: at, ...(note ? { resolutionNote: note } : {}) } : undefined,
-      activityLog: [...(item.activityLog ?? []), activity],
-    } : item));
-  };
-
-  const quarantineItem = (id: string, reason: WorkflowReason) => {
-    addActivity(id, 'Moved to Quarantine', `Reason: ${reason}`, { status: 'Quarantined', quarantineReason: reason });
-  };
-
-  const addItemNote = (id: string, note: string) => {
-    if (!note.trim()) return;
-    addActivity(id, 'Added batch note', note.trim());
-  };
-
-  const requestSupplierReturn = (id: string, note = '') => {
-    if (!user) return;
-    const at = new Date().toISOString();
-    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action: 'Requested supplier return', actorId: user.id, actorName: user.name, at, ...(note.trim() ? { note: note.trim() } : {}) };
-    setItems(prev => prev.map(item => {
-      if (item.id !== id) return item;
-      if (item.supplierReturnRequest?.status === 'requested') return item;
-      const request = {
-        status: 'requested' as const,
-        supplierName: item.supplier || 'Supplier not recorded',
-        supplierBatchNo: item.batchNo,
-        requestedBy: user.name,
-        requestedAt: at,
-        ...(note.trim() ? { note: note.trim() } : {}),
-      };
-      return { ...item, status: 'Pending Return', supplierReturnRequest: request, activityLog: [...(item.activityLog ?? []), activity] };
-    }));
-  };
-
-  const processSupplierReturn = (id: string) => {
-    if (user?.role !== 'admin') return;
-    const at = new Date().toISOString();
-    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action: 'Processed supplier return request', actorId: user.id, actorName: user.name, at };
-    setItems(prev => prev.map(item => {
-      if (item.id !== id || !item.supplierReturnRequest) return item;
-      return { ...item, supplierReturnRequest: { ...item.supplierReturnRequest, status: 'processed', processedBy: user.name, processedAt: at }, status: 'Quarantined', quarantineReason: 'Supplier Return', activityLog: [...(item.activityLog ?? []), activity] };
-    }));
-  };
-
-  const disposeItem = (id: string, reason: WorkflowReason, note = '') => {
-    if (!user) return;
-    const at = new Date().toISOString();
-    const activity: InventoryActivity = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, action: 'Confirmed physical disposal', actorId: user.id, actorName: user.name, at, note: `Reason: ${reason}${note.trim() ? ` — ${note.trim()}` : ''}` };
-    setItems(prev => prev.map(item => {
-      if (item.id !== id) return item;
-      return { ...item, status: 'Disposed', disposal: { reason, quantity: item.quantity, actorId: user.id, actorName: user.name, at, ...(note.trim() ? { note: note.trim() } : {}) }, quantity: 0, activityLog: [...(item.activityLog ?? []), activity] };
-    }));
-  };
-
-  const recordSale = (id: string, units: number) => {
-    if (!user || !Number.isInteger(units) || units <= 0) return;
-    const at = new Date().toISOString();
-    setItems(prev => prev.map(item => {
-      const expired = new Date(item.expiryDate).getTime() < Date.now();
-      const unavailable = item.status === 'Quarantined' || item.status === 'Pending Return' || item.status === 'Disposed';
-      if (item.id !== id || expired || unavailable || item.quantity < units) return item;
-      const activity: InventoryActivity = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        action: `Dispensed ${units.toLocaleString()} units`,
-        actorId: user.id,
-        actorName: user.name,
-        at,
-      };
-      const quantity = item.quantity - units;
-      return {
-        ...item,
-        quantity,
-        unitsSold: (item.unitsSold ?? 0) + units,
-        status: quantity === 0 ? 'Low Stock' : item.status,
-        activityLog: [...(item.activityLog ?? []), activity],
-      };
-    }));
-  };
-
-  const resetToMock = () => {
-    localStorage.removeItem('expireguard_items');
-    setItems(mockItems);
-  };
-
-  const roleScopedItems = useMemo(() => user?.role === 'admin' ? items : items.map(item => ({
-    ...item,
-    unitPrice: item.sellingPriceGhs ?? 0,
-    unitCostGhs: undefined,
-    supplier: undefined,
-    dateReceived: undefined,
-    supplierReturnRequest: item.supplierReturnRequest ? { ...item.supplierReturnRequest, supplierName: undefined } : undefined,
-  })), [items, user?.role]);
-
-  return (
-    <InventoryContext.Provider value={{ items: roleScopedItems, loading, error, addItem, deleteItem, updateItem, acknowledgeItem, flagItemForReview, closeAdminFlag, quarantineItem, addItemNote, requestSupplierReturn, processSupplierReturn, disposeItem, recordSale, resetToMock }}>
-      {children}
-    </InventoryContext.Provider>
-  );
+  return <InventoryContext.Provider value={value}>{children}</InventoryContext.Provider>;
 }
 
 export function useInventory() {

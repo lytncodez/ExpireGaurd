@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import type { WorkflowReason } from '../api/mockData';
+import type { WorkflowReason } from '../api/types';
 import { useInventory } from '../api/useInventory';
 import { Button } from './ui/Button';
 

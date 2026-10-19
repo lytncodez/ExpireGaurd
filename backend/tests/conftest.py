@@ -16,6 +16,8 @@ os.environ["SCHEDULER_ENABLED"] = "false"
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["SMS_MODE"] = "mock"
 os.environ["SMS_MIN_SEVERITY"] = "CRITICAL"
+os.environ["EMAIL_MODE"] = "off"  # email tests switch it on explicitly
+os.environ["EMAIL_MIN_SEVERITY"] = "CRITICAL"
 os.environ["AI_PROVIDER"] = "mock"
 os.environ["ALLOW_MULTIPLE_COMPANIES"] = "true"  # lets isolation tests create two pharmacies
 os.environ["ALLOW_PUBLIC_SIGNUP"] = "true"
@@ -28,6 +30,7 @@ from sqlalchemy import text  # noqa: E402
 import app.models  # noqa: E402,F401  (registers tables)
 from app.core.database import Base, SessionLocal, engine  # noqa: E402
 from app.main import app as fastapi_app  # noqa: E402
+from app.services.email_service import MockEmailProvider  # noqa: E402
 from app.services.sms_service import MockSMSProvider  # noqa: E402
 from app.utils.helpers import rate_limiter  # noqa: E402
 from tests.helpers import register_company  # noqa: E402
@@ -55,6 +58,7 @@ async def clean_state():
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"))
     MockSMSProvider.outbox.clear()
+    MockEmailProvider.outbox.clear()
     rate_limiter.reset()
     yield
 

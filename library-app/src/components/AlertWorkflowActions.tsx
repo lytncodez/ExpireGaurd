@@ -3,7 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { MoreHorizontal } from 'lucide-react';
 import { useInventory } from '../api/useInventory';
-import type { WorkflowReason } from '../api/mockData';
+import type { WorkflowReason } from '../api/types';
 import { Button } from './ui/Button';
 
 type WorkflowAction = 'flag' | 'note' | 'quarantine' | 'dispose' | null;

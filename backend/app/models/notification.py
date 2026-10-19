@@ -15,6 +15,7 @@ from app.models.user import str_enum
 
 class NotificationChannel(str, enum.Enum):
     SMS = "SMS"
+    EMAIL = "EMAIL"
 
 
 class NotificationStatus(str, enum.Enum):
@@ -36,7 +37,8 @@ class Notification(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     channel: Mapped[NotificationChannel] = mapped_column(
         str_enum(NotificationChannel, 16), nullable=False, default=NotificationChannel.SMS
     )
-    recipient: Mapped[str] = mapped_column(String(64), nullable=False)
+    recipient: Mapped[str] = mapped_column(String(255), nullable=False)
+    subject: Mapped[str | None] = mapped_column(String(255))  # email only
     message: Mapped[str] = mapped_column(Text, nullable=False)
     provider: Mapped[str | None] = mapped_column(String(32))
     status: Mapped[NotificationStatus] = mapped_column(

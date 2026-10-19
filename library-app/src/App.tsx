@@ -16,7 +16,8 @@ import Landing from './pages/Landing';
 import SignIn from './pages/SignIn';
 import SignUp from './pages/SignUp';
 import ForgotPassword from './pages/ForgotPassword';
-import { InventoryProvider } from './api/useInventory';
+import ResetPassword from './pages/ResetPassword';
+import { InventoryProvider, useInventory } from './api/useInventory';
 import { AuthProvider, useAuth } from './api/useAuth';
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -38,7 +39,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   handleReset = () => {
-    localStorage.removeItem('expireguard_items');
+    // Inventory lives on the server now; only drop the cached profile and reload.
+    localStorage.removeItem('expireguard_user');
     this.setState({ hasError: false });
     window.location.href = '/dashboard';
   };
@@ -52,13 +54,13 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
               Application Render Warning
             </h2>
             <p style={{ color: '#64748B', fontSize: '0.9rem', marginBottom: '1.5rem', lineHeight: 1.5 }}>
-              Stale cache or incompatible local data structure was detected. Resetting local inventory cache will restore normal operation.
+              Something went wrong while showing this page. Reloading usually fixes it; your inventory is stored safely on the server.
             </p>
             <button
               onClick={this.handleReset}
               style={{ background: '#3B3593', color: '#FFFFFF', border: 'none', padding: '0.75rem 1.5rem', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}
             >
-              Reset Data &amp; Reload Application
+              Reload Application
             </button>
           </div>
         </div>
@@ -80,6 +82,18 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 function AdminRoute({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   return user?.role === 'admin' ? <>{children}</> : <Navigate to="/dashboard" replace />;
+}
+
+// ─── Server action errors (e.g. "Insufficient stock in batch") ─────────────────
+function ActionErrorBanner() {
+  const { actionError, clearActionError } = useInventory();
+  if (!actionError) return null;
+  return (
+    <div role="alert" className="action-error-banner">
+      <span>{actionError}</span>
+      <button type="button" onClick={clearActionError} aria-label="Dismiss message">×</button>
+    </div>
+  );
 }
 
 // ─── Authenticated App Shell ─────────────────────────────────────────────────
@@ -125,6 +139,7 @@ function AppShell() {
 
       <div className="main-viewport">
         <Header searchTerm={searchTerm} setSearchTerm={setSearchTerm} />
+        <ActionErrorBanner />
 
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -170,6 +185,7 @@ function AppRouter() {
       <Route path="/signin" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <SignIn />} />
       <Route path="/signup" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <SignUp />} />
       <Route path="/forgot-password" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <ForgotPassword />} />
+      <Route path="/reset-password" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <ResetPassword />} />
 
       {/* Protected app routes */}
       <Route path="/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />

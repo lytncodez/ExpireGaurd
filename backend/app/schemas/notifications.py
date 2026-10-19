@@ -13,6 +13,7 @@ class NotificationRead(ORMModel):
     alert_id: uuid.UUID | None
     channel: NotificationChannel
     recipient: str
+    subject: str | None = None
     message: str
     provider: str | None
     status: NotificationStatus
