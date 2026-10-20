@@ -23,6 +23,7 @@ htmlcov/
 *.pfx
 *.p12
 *secret*
+!scripts/check_secrets.py
 *credential*
 credentials.json
 service-account*.json
