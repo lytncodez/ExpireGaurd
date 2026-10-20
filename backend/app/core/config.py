@@ -91,13 +91,16 @@ class Settings(BaseSettings):
     ANOMALY_LOW_COVER_DAYS: int = 3
 
     # --- AI intelligence layer (Phase 2) -----------------------------------
-    AI_PROVIDER: Literal["mock", "openai", "anthropic"] = "mock"
+    AI_PROVIDER: Literal["mock", "openai", "anthropic", "gemini"] = "mock"
     OPENAI_API_KEY: SecretStr | None = None
     OPENAI_MODEL: str | None = None
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     ANTHROPIC_API_KEY: SecretStr | None = None
     ANTHROPIC_MODEL: str | None = None
     ANTHROPIC_BASE_URL: str = "https://api.anthropic.com/v1"
+    GEMINI_API_KEY: SecretStr | None = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
     AI_TIMEOUT_SECONDS: float = 45.0
     AI_MAX_TOKENS: int = 2000
     AI_TEMPERATURE: float = 0.2

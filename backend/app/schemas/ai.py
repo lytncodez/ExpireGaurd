@@ -102,3 +102,29 @@ class AIStatus(BaseModel):
     is_mock: bool
     configured_provider: str
     fallback_reason: str | None = Field(description="Why the mock provider is used instead of the configured one")
+
+
+class LiveChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    conversation_id: str | None = Field(default=None)
+    items: list[dict[str, Any]] | None = Field(default=None)
+    history: list[dict[str, str]] | None = Field(default=None)
+
+
+class LiveChatResponse(BaseModel):
+    conversation_id: str
+    message_id: str
+    intent: str
+    answer: str
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    insufficient_evidence: bool = False
+    follow_up_suggestions: list[str] = Field(default_factory=list)
+    grounded: bool = True
+    fallback_used: bool = False
+    provider: str
+    model: str
+    seasonal_card: SeasonalRecommendationCard | None = None
+    data_sources_used: list[str] = Field(default_factory=list)
+    tools_invoked: list[str] = Field(default_factory=list)
+    charts: list[dict[str, Any]] = Field(default_factory=list)
+

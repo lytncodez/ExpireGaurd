@@ -47,7 +47,18 @@ def build_provider(cfg: Settings) -> ProviderSelection:
                 ),
                 choice, None,
             )
-        reason = "ANTHROPIC_API_KEY and ANTHROPIC_MODEL must both be set"
+    elif choice == "gemini":
+        key = secret_value(cfg.GEMINI_API_KEY)
+        if key and cfg.GEMINI_MODEL and cfg.GEMINI_MODEL.strip():
+            from app.ai.providers.gemini_provider import GeminiProvider
+
+            return ProviderSelection(
+                GeminiProvider(
+                    key, cfg.GEMINI_MODEL.strip(), base_url=cfg.GEMINI_BASE_URL, **common
+                ),
+                choice, None,
+            )
+        reason = "GEMINI_API_KEY and GEMINI_MODEL must both be set"
     else:
         return ProviderSelection(MockProvider(), choice, None)
     logger.warning("AI_PROVIDER=%s but %s; using the mock provider", choice, reason)

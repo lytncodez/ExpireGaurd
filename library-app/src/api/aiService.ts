@@ -555,3 +555,58 @@ export function answerGroundedQuery(query: string, items: InventoryItem[]): Omit
     ],
   };
 }
+
+const BACKEND_URL = 'http://localhost:8000';
+
+/**
+ * Sends chat message to the ExpireGuard Backend AI endpoint backed by Google Gemini
+ * with live inventory context. Gracefully falls back to deterministic grounded engine
+ * if the backend is offline or unreachable.
+ */
+export async function fetchAIResponse(
+  query: string,
+  items: InventoryItem[],
+  conversationId?: string,
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<Omit<ChatMessage, 'id' | 'timestamp'>> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    const res = await fetch(`${BACKEND_URL}/ai/live-chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        message: query,
+        conversation_id: conversationId,
+        items,
+        history,
+      }),
+    });
+
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        role: 'assistant',
+        content: data.answer || '',
+        evidence: data.evidence,
+        dataSourcesUsed: data.data_sources_used || ['Live Shop Inventory', 'Gemini AI Engine'],
+        toolsInvoked: data.tools_invoked || ['get_current_stock'],
+        seasonalCard: data.seasonal_card,
+        charts: data.charts,
+        followUpSuggestions: data.follow_up_suggestions,
+      };
+    }
+  } catch (err) {
+    console.warn('Backend AI service unreachable, using local grounded calculation engine:', err);
+  }
+
+  // Graceful deterministic fallback
+  return answerGroundedQuery(query, items);
+}
+

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInventory } from '../api/useInventory';
 import {
-  answerGroundedQuery,
+  fetchAIResponse,
   getSavedConversations,
   saveConversations,
   type ChatMessage,
@@ -143,15 +143,20 @@ export default function Insights() {
       })
     );
 
-    // Compute grounded response from stock pipeline
+    // Compute grounded response from AI pipeline (backend Gemini or resilient local grounded fallback)
     setIsLoading(true);
     setErrorMessage(null);
 
-    // Simulate server response delay and word-by-word streaming
-    setTimeout(() => {
-      setIsLoading(false);
+    (async () => {
       try {
-        const fullResponse = answerGroundedQuery(text, items);
+        const targetConv = conversations.find(c => c.id === targetConvId);
+        const fullResponse = await fetchAIResponse(
+          text,
+          items,
+          targetConvId,
+          targetConv?.messages.map((m: ChatMessage) => ({ role: m.role, content: m.content }))
+        );
+        setIsLoading(false);
         const assistantMsgId = `msg-${Date.now()}-asst`;
 
         // Start streaming effect
@@ -191,12 +196,13 @@ export default function Insights() {
 
           setStreamedText(prev => (prev ? `${prev} ${words[currentIdx]}` : words[currentIdx]));
           currentIdx++;
-        }, 32);
+        }, 28);
       } catch (err: any) {
         setIsLoading(false);
-        setErrorMessage('Failed to query inventory pipeline. Click retry to attempt again.');
+        setIsStreaming(false);
+        setErrorMessage(err?.message || 'Failed to query inventory pipeline. Click retry to attempt again.');
       }
-    }, 450);
+    })();
   };
 
   const handleStopStreaming = () => {
