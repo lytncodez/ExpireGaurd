@@ -13,7 +13,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base import AIProvider, AIProviderError, AITask
 from app.ai.context_builder import INTENT_SECTIONS, build_context, detect_intent
-from app.ai.guardrails import AIOutputError, collect_facts, parse_json_object, validate_chat, validate_model
+from app.ai.guardrails import (
+    AIOutputError,
+    check_input_safety,
+    collect_facts,
+    parse_json_object,
+    sanitize_input_text,
+    validate_chat,
+    validate_model,
+)
 from app.ai.prompts import SYSTEM_RULES, chat_prompt
 from app.ai.providers.mock_provider import build_chat
 from app.core.config import settings
@@ -104,7 +112,52 @@ async def chat(
     conversation_id: uuid.UUID | None = None,
     ip: str | None = None,
 ) -> ChatResponse:
-    question = message.strip()
+    raw_question = message.strip()
+
+    # 1. Anti-Wayward & Safety Guardrail: Block prompt injection, jailbreaks, or out-of-scope clinical medical advice
+    safety_block = check_input_safety(raw_question)
+    if safety_block:
+        if conversation_id:
+            conv = await get_conversation(db, user, conversation_id)
+        else:
+            conv = AIConversation(company_id=user.company_id, user_id=user.id, title="Safety Notice")
+            db.add(conv)
+            await db.flush()
+
+        asst_msg = AIMessage(
+            conversation_id=conv.id,
+            role=MessageRole.ASSISTANT,
+            content=safety_block,
+            meta={"intent": "SAFETY_RESTRICTION", "guardrail_triggered": True},
+        )
+        db.add(asst_msg)
+        await db.commit()
+        await db.refresh(asst_msg)
+        return ChatResponse(
+            conversation_id=conv.id,
+            message_id=asst_msg.id,
+            intent="SAFETY_RESTRICTION",
+            answer=safety_block,
+            evidence=[],
+            insufficient_evidence=True,
+            follow_up_suggestions=[
+                "What is expiring in the next 60 days?",
+                "What should I stock up on this season?",
+            ],
+            grounded=True,
+            fallback_used=True,
+            provider=provider.name,
+            model=provider.model,
+            data_sources_used=["ExpireGuard Safety Guardrails"],
+            tools_invoked=[],
+            charts=[],
+        )
+
+    # 2. PII Guardrail: Redact phone numbers, emails, Ghana Cards, and payment cards
+    question, pii_redactions = sanitize_input_text(raw_question)
+    if pii_redactions:
+        logger.info("Redacted PII from user chat input: %s", pii_redactions)
+
     if conversation_id:
         conv = await get_conversation(db, user, conversation_id)
     else:

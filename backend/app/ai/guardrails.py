@@ -56,6 +56,90 @@ AUTONOMY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# --------------------------------------------------------------------------- PII Patterns
+EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+PHONE_RE = re.compile(
+    r"(?:\+?233[-.\s]?|0)(?:2[034678]|5[0459])[-.\s]?\d{3}[-.\s]?\d{4}\b|"
+    r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
+)
+GHANA_CARD_RE = re.compile(r"\bGHA-\d{9}-\d\b", re.IGNORECASE)
+PAYMENT_CARD_RE = re.compile(r"\b(?:\d{4}[-\s]?){3}\d{4}\b")
+PATIENT_ID_RE = re.compile(r"\b(?:patient|customer)\s*:\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b", re.IGNORECASE)
+
+# --------------------------------------------------------------------------- Anti-Wayward & Safety Patterns
+JAILBREAK_RE = re.compile(
+    r"\b(ignore\s+(?:all\s+)?(?:previous\s+)?instructions|disregard\s+(?:system\s+)?rules|"
+    r"bypass\s+safety|act\s+as\s+dan|developer\s+mode|reveal\s+(?:your\s+)?system\s+prompt|"
+    r"show\s+(?:me\s+)?(?:the\s+)?(?:api[_\s]?key|secret|password)|print\s+(?:your\s+)?instructions)\b",
+    re.IGNORECASE,
+)
+CLINICAL_ADVICE_RE = re.compile(
+    r"\b(?:what\s+dosage\s+(?:should|to)\s+give|how\s+much\s+(?:mg|ml|tablets|dose)\s+should\s+i\s+(?:give|take|prescribe)|"
+    r"prescribe\s+(?:for|to)|diagnose\s+(?:my|this|patient)|treatment\s+plan\s+for\s+(?:malaria|typhoid|infection|child))\b",
+    re.IGNORECASE,
+)
+SECRET_LEAK_RE = re.compile(
+    r"\b(?:AIza[0-9A-Za-z\-_]{35}|sk-[a-zA-Z0-9T3_\-]{20,}|sk-ant-[a-zA-Z0-9_\-]{20,}|"
+    r"gh[pous]_[0-9a-zA-Z]{36,}|Bearer\s+[A-Za-z0-9_\-\.]{25,}|-----BEGIN)\b"
+)
+
+
+def sanitize_input_text(text: str) -> tuple[str, list[str]]:
+    """Redacts PII (emails, phone numbers, Ghana card IDs, payment cards) from user input before sending to LLM."""
+    redactions: list[str] = []
+    sanitized = text
+
+    if EMAIL_RE.search(sanitized):
+        sanitized = EMAIL_RE.sub("[REDACTED_EMAIL]", sanitized)
+        redactions.append("email")
+    if GHANA_CARD_RE.search(sanitized):
+        sanitized = GHANA_CARD_RE.sub("[REDACTED_GHANA_CARD]", sanitized)
+        redactions.append("ghana_card")
+    if PHONE_RE.search(sanitized):
+        sanitized = PHONE_RE.sub("[REDACTED_PHONE]", sanitized)
+        redactions.append("phone_number")
+    if PAYMENT_CARD_RE.search(sanitized):
+        sanitized = PAYMENT_CARD_RE.sub("[REDACTED_CARD]", sanitized)
+        redactions.append("payment_card")
+    if PATIENT_ID_RE.search(sanitized):
+        sanitized = PATIENT_ID_RE.sub("patient: [REDACTED_NAME]", sanitized)
+        redactions.append("patient_name")
+
+    return sanitized, redactions
+
+
+def check_input_safety(text: str) -> str | None:
+    """Detects jailbreak attempts or out-of-scope medical prescription advice."""
+    if JAILBREAK_RE.search(text):
+        return (
+            "I am ExpireGuard's inventory and expiry intelligence assistant. I operate under strict safety guardrails "
+            "and cannot execute instructions that attempt to bypass system rules or reveal internal secrets."
+        )
+    if CLINICAL_ADVICE_RE.search(text):
+        return (
+            "ExpireGuard AI is strictly an inventory, expiry, and procurement assistant. For clinical drug dosage, "
+            "patient prescription guidelines, or medical diagnosis, please consult a licensed physician or pharmacist."
+        )
+    return None
+
+
+def check_output_safety(texts: list[str]) -> list[str]:
+    """Ensures AI output never leaks secrets, API keys, credentials, or PII."""
+    violations: list[str] = []
+    for text in texts:
+        if not text:
+            continue
+        if SECRET_LEAK_RE.search(text):
+            violations.append("Output contains potential API key or secret token leak")
+        if EMAIL_RE.search(text):
+            violations.append("Output contains unredacted email address")
+        if GHANA_CARD_RE.search(text):
+            violations.append("Output contains Ghana National ID / Ghana Card number")
+        if PAYMENT_CARD_RE.search(text):
+            violations.append("Output contains payment card number")
+    return violations
+
+
 
 class AIOutputError(Exception):
     """The model output is not valid JSON / does not match the schema."""
@@ -212,6 +296,8 @@ def _values_match(claimed: Any, actual: Any) -> bool:
 
 def check_text(texts: list[str], facts: ContextFacts) -> tuple[list[str], int]:
     violations: list[str] = []
+    # Check for secret leaks, API keys, and unredacted PII in output
+    violations.extend(check_output_safety(texts))
     checked = 0
     for text in texts:
         if not text:

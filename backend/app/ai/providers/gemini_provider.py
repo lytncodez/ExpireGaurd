@@ -38,6 +38,9 @@ class GeminiProvider(AIProvider):
         self.temperature = temperature
         self._transport = transport
 
+    def __repr__(self) -> str:
+        return f"<GeminiProvider model={self.model!r} key=***>"
+
     async def generate_response(
         self,
         context: dict[str, Any],
@@ -47,7 +50,8 @@ class GeminiProvider(AIProvider):
         task: AITask,
         history: list[dict[str, str]] | None = None,
     ) -> AIResponse:
-        url = f"{self.base_url}/models/{self.model}:generateContent?key={self._api_key}"
+        # Secure endpoint: Send key in header (x-goog-api-key) rather than URL query parameter
+        url = f"{self.base_url}/models/{self.model}:generateContent"
 
         contents: list[dict[str, Any]] = []
         if history:
@@ -68,9 +72,14 @@ class GeminiProvider(AIProvider):
             },
         }
 
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self._api_key,
+        }
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout, transport=self._transport) as client:
-                resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+                resp = await client.post(url, json=payload, headers=headers)
         except httpx.HTTPError as exc:
             raise AIProviderError(f"Gemini request failed: {type(exc).__name__}") from exc
 
@@ -81,6 +90,9 @@ class GeminiProvider(AIProvider):
                 error_msg = err_json.get("error", {}).get("message", resp.text)
             except Exception:
                 pass
+            # Mask any accidental key reflection in error messages
+            if self._api_key and self._api_key in error_msg:
+                error_msg = error_msg.replace(self._api_key, "[REDACTED_API_KEY]")
             raise AIProviderError(f"Gemini returned HTTP {resp.status_code}: {error_msg}")
 
         try:

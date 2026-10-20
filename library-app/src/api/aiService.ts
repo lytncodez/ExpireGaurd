@@ -558,6 +558,14 @@ export function answerGroundedQuery(query: string, items: InventoryItem[]): Omit
 
 const BACKEND_URL = 'http://localhost:8000';
 
+export function clientSanitizePII(text: string): string {
+  let out = text.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[REDACTED_EMAIL]');
+  out = out.replace(/\bGHA-\d{9}-\d\b/gi, '[REDACTED_GHANA_CARD]');
+  out = out.replace(/(?:\+?233[-.\s]?|0)(?:2[034678]|5[0459])[-.\s]?\d{3}[-.\s]?\d{4}\b/g, '[REDACTED_PHONE]');
+  out = out.replace(/\b(?:\d{4}[-\s]?){3}\d{4}\b/g, '[REDACTED_CARD]');
+  return out;
+}
+
 /**
  * Sends chat message to the ExpireGuard Backend AI endpoint backed by Google Gemini
  * with live inventory context. Gracefully falls back to deterministic grounded engine
@@ -569,6 +577,8 @@ export async function fetchAIResponse(
   conversationId?: string,
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
 ): Promise<Omit<ChatMessage, 'id' | 'timestamp'>> {
+  const sanitizedQuery = clientSanitizePII(query);
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 12000);
@@ -580,7 +590,7 @@ export async function fetchAIResponse(
       },
       signal: controller.signal,
       body: JSON.stringify({
-        message: query,
+        message: sanitizedQuery,
         conversation_id: conversationId,
         items,
         history,

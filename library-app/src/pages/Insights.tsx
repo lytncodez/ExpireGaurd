@@ -335,9 +335,25 @@ export default function Insights() {
                 >
                   ADMIN
                 </span>
+                <span
+                  style={{
+                    fontSize: '0.68rem',
+                    fontWeight: 800,
+                    background: '#DCFCE7',
+                    color: '#166534',
+                    padding: '0.15rem 0.5rem',
+                    borderRadius: '9999px',
+                    letterSpacing: '0.04em',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.25rem',
+                  }}
+                >
+                  🛡️ PII &amp; SECRET SHIELD
+                </span>
               </div>
               <div style={{ fontSize: '0.74rem', color: '#64748B', marginTop: '0.1rem' }}>
-                Grounded in Accra Pharmacy ledger • Ghana Seasonality Engine • FEFO Protocol
+                Grounded in Accra Pharmacy ledger • Auto-PII Scrubbing • Zero-Leak Credentials
               </div>
             </div>
           </div>
@@ -859,23 +875,23 @@ export default function Insights() {
 
             <div style={{ fontSize: '0.82rem', color: '#475569', lineHeight: 1.5, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-                <strong style={{ color: '#1E3A4C' }}>Zero Frontend Credentials:</strong>
-                <div>No API provider keys are stored in client code, localStorage, or browser variables. All analysis runs server-side behind ExpireGuard's authenticated endpoints.</div>
+                <strong style={{ color: '#1E3A4C' }}>🔐 API Key &amp; Git Leak Shield:</strong>
+                <div>All AI keys are confined to server-side <code>backend/.env</code>. Hardened <code>.gitignore</code> rules and automated pre-commit hooks actively scan staged files to prevent credentials from ever leaking to GitHub.</div>
               </div>
 
               <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-                <strong style={{ color: '#1E3A4C' }}>Deterministic Tool Grounding:</strong>
-                <div>Numbers (quantities, values, expiry dates, sales totals) come strictly from parameterised database tool queries (`get_current_stock`, `get_expiry_risks`). The model never guesses figures.</div>
+                <strong style={{ color: '#1E3A4C' }}>🛡️ Automated PII Scrubbing:</strong>
+                <div>Patient phone numbers (+233/Ghana), Ghana Card numbers (<code>GHA-XXXXXXXXX-X</code>), emails, and payment card numbers are automatically redacted client-side and server-side before prompts reach the LLM.</div>
               </div>
 
               <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-                <strong style={{ color: '#1E3A4C' }}>Cold-Start Protection:</strong>
-                <div>Products with &lt;12 months history in this pharmacy are flagged with "Low" confidence and transparently labeled as general Ghana regional assumptions.</div>
+                <strong style={{ color: '#1E3A4C' }}>🛑 Anti-Wayward &amp; Safety Boundaries:</strong>
+                <div>Bypasses and jailbreak attempts are blocked immediately. The assistant strictly confines itself to pharmacy stock, FEFO rotation, and purchase plans; clinical dosage and diagnostic queries are redirected to licensed physicians.</div>
               </div>
 
               <div style={{ background: '#F8FAFC', padding: '0.75rem', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-                <strong style={{ color: '#1E3A4C' }}>Role-Based Access:</strong>
-                <div>Admin-only endpoints. Dispenser accounts cannot view procurement costs, supplier lists, or valuation data.</div>
+                <strong style={{ color: '#1E3A4C' }}>📊 Deterministic Inventory Grounding:</strong>
+                <div>All product quantities, batch numbers, days-to-expiry, and valuations come strictly from parameterised shop inventory queries. Mathematical claims are validated by server-side guardrails.</div>
               </div>
             </div>
 

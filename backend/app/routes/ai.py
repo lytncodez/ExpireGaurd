@@ -15,7 +15,15 @@ from app.ai.conversation import (
     list_messages,
 )
 from app.ai.factory import get_ai_provider, get_provider_selection
-from app.ai.guardrails import AIOutputError, collect_facts, parse_json_object, validate_chat, validate_model
+from app.ai.guardrails import (
+    AIOutputError,
+    check_input_safety,
+    collect_facts,
+    parse_json_object,
+    sanitize_input_text,
+    validate_chat,
+    validate_model,
+)
 from app.ai.prompts import SYSTEM_RULES, chat_prompt
 from app.core.config import settings
 from app.core.exceptions import error_responses
@@ -381,7 +389,39 @@ async def ai_live_chat(
     data: LiveChatRequest,
     provider: AIProvider = Depends(get_ai_provider),
 ) -> LiveChatResponse:
-    question = data.message.strip()
+    raw_question = data.message.strip()
+
+    # 1. Anti-Wayward & Safety Guardrail: Block prompt injection, jailbreaks, or out-of-scope clinical medical advice
+    safety_block = check_input_safety(raw_question)
+    if safety_block:
+        conv_id = data.conversation_id or f"conv-{uuid.uuid4().hex[:8]}"
+        msg_id = f"msg-{uuid.uuid4().hex[:8]}"
+        return LiveChatResponse(
+            conversation_id=conv_id,
+            message_id=msg_id,
+            intent="SAFETY_RESTRICTION",
+            answer=safety_block,
+            evidence=[],
+            insufficient_evidence=True,
+            follow_up_suggestions=[
+                "What is expiring in the next 60 days?",
+                "What should I stock up on this season?",
+                "Which products sell fastest right now?",
+            ],
+            grounded=True,
+            fallback_used=True,
+            provider=provider.name,
+            model=provider.model,
+            data_sources_used=["ExpireGuard Safety Guardrails"],
+            tools_invoked=[],
+            charts=[],
+        )
+
+    # 2. PII Guardrail: Redact phone numbers, emails, Ghana Cards, and payment cards
+    question, pii_redactions = sanitize_input_text(raw_question)
+    if pii_redactions:
+        logger.info("Redacted PII from user query: %s", pii_redactions)
+
     intent = detect_intent(question)
     ctx = build_context_from_items(data.items or [], intent)
     facts = collect_facts(ctx)
