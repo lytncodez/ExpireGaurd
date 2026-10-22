@@ -9,9 +9,29 @@ import os
 
 os.environ["APP_ENV"] = "test"
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-0123456789-abcdefghijklmnopqrstuvwxyz")
-os.environ["DATABASE_URL"] = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql+asyncpg://expireguard:expireguard@localhost:5432/expireguard_test"
-)
+
+
+def _test_database_url() -> str:
+    """TEST_DATABASE_URL from the environment, else from backend/.env, else the docker-compose default."""
+    if os.environ.get("TEST_DATABASE_URL"):
+        return os.environ["TEST_DATABASE_URL"]
+    env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if os.path.exists(env_file):
+        with open(env_file, encoding="utf-8-sig") as fh:
+            for line in fh:
+                key, sep, value = line.strip().partition("=")
+                if sep and key.strip() == "TEST_DATABASE_URL" and value.strip():
+                    return value.strip().strip('"').strip("'")
+    return "postgresql+asyncpg://expireguard:expireguard@localhost:5432/expireguard_test"
+
+
+os.environ["DATABASE_URL"] = _test_database_url()
+
+# Test accounts use the reserved ".test" domain (admin@acme.test). Newer email-validator releases reject
+# reserved domains unless told they are running in a test environment.
+import email_validator  # noqa: E402
+
+email_validator.TEST_ENVIRONMENT = True
 os.environ["SCHEDULER_ENABLED"] = "false"
 os.environ["RATE_LIMIT_ENABLED"] = "false"
 os.environ["SMS_MODE"] = "mock"

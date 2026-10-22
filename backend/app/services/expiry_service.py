@@ -22,7 +22,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.models import AlertSeverity, AlertType, AuditAction, Batch, BatchStatus, Company, Product, WorkflowStatus
+from app.models import (
+    EXPIRY_ALERT_TYPES,
+    Alert,
+    AlertSeverity,
+    AlertType,
+    AuditAction,
+    Batch,
+    BatchStatus,
+    Company,
+    Product,
+    WorkflowStatus,
+)
 from app.schemas.batch import BatchRead
 from app.services import audit_service
 from app.services.auth_service import get_company
@@ -189,7 +200,20 @@ async def run_expiry_check(
         select(Batch, Product)
         .join(Product, Product.id == Batch.product_id)
         .where(Batch.company_id == company_id)
-        .where((Batch.remaining_quantity > 0) | (Batch.status != BatchStatus.DEPLETED))
+        .where(
+            (Batch.remaining_quantity > 0)
+            | (Batch.status != BatchStatus.DEPLETED)
+            # A sale or adjustment can empty a batch (and mark it DEPLETED) between checks:
+            # still visit it so its open expiry alert gets resolved.
+            | Batch.id.in_(
+                select(Alert.batch_id).where(
+                    Alert.company_id == company_id,
+                    Alert.is_resolved.is_(False),
+                    Alert.batch_id.is_not(None),
+                    Alert.alert_type.in_(EXPIRY_ALERT_TYPES),
+                )
+            )
+        )
         .order_by(Batch.expiry_date)
     )
     if batch_ids is not None:

@@ -1,4 +1,5 @@
 import importlib.util
+import sys
 from pathlib import Path
 
 from app.core.database import SessionLocal
@@ -11,6 +12,8 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "seed_demo_data.py"
 def _load_seed_module():
     spec = importlib.util.spec_from_file_location("seed_demo_data", SCRIPT)
     module = importlib.util.module_from_spec(spec)
+    # Register before executing: on Python 3.12+ @dataclass looks the module up in sys.modules.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
