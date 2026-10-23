@@ -5,6 +5,9 @@ interface User {
   name: string;
   email: string;
   role: 'admin' | 'dispenser';
+  companyId?: string;
+  companyName?: string;
+  companyStatus?: 'approved_active' | 'application_submitted' | 'suspended';
   avatar?: string;
 }
 
@@ -13,7 +16,6 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   updateUserRole: (email: string, role: 'admin' | 'dispenser') => void;
   forgotPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
@@ -29,6 +31,9 @@ const DEMO_USERS: Array<User & { password: string }> = [
     email: 'admin@expireguard.com',
     password: 'admin123',
     role: 'admin',
+    companyId: 'demo-company-001',
+    companyName: 'ExpiryGuard Demo Pharmacy',
+    companyStatus: 'approved_active',
   },
   {
     id: 'user-002',
@@ -36,6 +41,9 @@ const DEMO_USERS: Array<User & { password: string }> = [
     email: 'manager@expireguard.com',
     password: 'manager123',
     role: 'dispenser',
+    companyId: 'demo-company-001',
+    companyName: 'ExpiryGuard Demo Pharmacy',
+    companyStatus: 'approved_active',
   },
   {
     id: 'user-003',
@@ -43,17 +51,30 @@ const DEMO_USERS: Array<User & { password: string }> = [
     email: 'dispenser@expireguard.com',
     password: 'dispenser123',
     role: 'dispenser',
+    companyId: 'demo-company-001',
+    companyName: 'ExpiryGuard Demo Pharmacy',
+    companyStatus: 'approved_active',
   },
 ];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
+    if (!import.meta.env.DEV) return null;
     const saved = localStorage.getItem('expireguard_user');
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as User;
         const overrides = JSON.parse(localStorage.getItem('expireguard_role_overrides') || '{}') as Record<string, 'admin' | 'dispenser'>;
-        return { ...parsed, role: overrides[parsed.email.toLowerCase()] || (parsed.role === 'admin' ? 'admin' : 'dispenser') };
+        const demo = DEMO_USERS.find(candidate => candidate.email.toLowerCase() === parsed.email.toLowerCase());
+        return {
+          ...parsed,
+          ...(demo ? {
+            companyId: demo.companyId,
+            companyName: demo.companyName,
+            companyStatus: demo.companyStatus,
+          } : {}),
+          role: overrides[parsed.email.toLowerCase()] || (parsed.role === 'admin' ? 'admin' : 'dispenser'),
+        };
       } catch {
         return null;
       }
@@ -64,6 +85,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    if (!import.meta.env.DEV) {
+      return { success: false, error: 'The authentication backend is not connected. Development demo accounts are disabled.' };
+    }
     setIsLoading(true);
     await new Promise(r => setTimeout(r, 900)); // Simulate network delay
 
@@ -80,28 +104,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setIsLoading(false);
     return { success: false, error: 'Invalid email or password. Please try again.' };
-  };
-
-  const signup = async (name: string, email: string, _password: string): Promise<{ success: boolean; error?: string }> => {
-    setIsLoading(true);
-    await new Promise(r => setTimeout(r, 1000));
-
-    if (DEMO_USERS.some(u => u.email === email)) {
-      setIsLoading(false);
-      return { success: false, error: 'An account with this email already exists.' };
-    }
-
-    const newUser: User = {
-      id: `user-${Date.now()}`,
-      name,
-      email,
-      role: 'dispenser',
-    };
-
-    setUser(newUser);
-    localStorage.setItem('expireguard_user', JSON.stringify(newUser));
-    setIsLoading(false);
-    return { success: true };
   };
 
   const logout = () => {
@@ -122,6 +124,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const forgotPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    if (!import.meta.env.DEV) {
+      return { success: false, error: 'The password recovery backend is not connected.' };
+    }
     setIsLoading(true);
     await new Promise(r => setTimeout(r, 800));
     setIsLoading(false);
@@ -140,7 +145,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user,
         isLoading,
         login,
-        signup,
         logout,
         updateUserRole,
         forgotPassword,

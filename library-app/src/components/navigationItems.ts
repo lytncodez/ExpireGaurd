@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Bell,
+  Building2,
   CirclePlus,
   LayoutDashboard,
   Package,
@@ -23,5 +24,6 @@ export const navigationItems: NavigationItem[] = [
   { label: 'Alerts', to: '/alerts', icon: Bell },
   { label: 'Reports', to: '/reports', icon: BarChart3, adminOnly: true },
   { label: 'AI Insights', to: '/insights', icon: Sparkles, adminOnly: true },
+  { label: 'Company portal', to: '/company', icon: Building2, adminOnly: true },
   { label: 'Settings', to: '/settings', icon: Settings, adminOnly: true },
 ];

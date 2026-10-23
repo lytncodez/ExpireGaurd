@@ -12,6 +12,7 @@ ExpiryGuard is a pharmacy stock and batch tracking frontend. It helps staff revi
 - **Reports (Admin):** risk distribution, a 12-month expiry value projection, category and supplier summaries, at-risk products, stock movement, and filtered CSV export.
 - **AI Insights (Admin):** sample operational insight and action-plan views.
 - **Settings (Admin):** risk thresholds, pharmacy settings, and a frontend user and role management interface.
+- **Company onboarding prototype:** company registration, application status, manual payment-reference capture, a separate development-only review console, staff invitation prototypes, and notification preferences.
 - **Shared design system:** responsive layouts, collapsible navigation, risk-band colors, reusable stat cards, and GH₵ currency formatting.
 
 ## Roles
@@ -27,7 +28,26 @@ The legacy demo account `manager@expireguard.com` / `manager123` also maps to Di
 
 ### Access-control limitation
 
-This repository is currently a browser-only prototype. Authentication, role overrides, settings, and inventory persistence are simulated with React state and `localStorage`; there is no server or API enforcing permissions. The role-based navigation, route guards, and role-scoped inventory context are client-side controls and **do not provide server-side confidentiality**. Do not use them to protect real commercial data until authentication and inventory access are moved to a backend that authorizes every request.
+This repository's frontend is a browser-only prototype. Authentication, role overrides, settings, inventory, company applications, staff invites, and notification preferences are simulated with React state and `localStorage`; client-side route guards **do not provide server-side confidentiality or authorization**. Demo credentials and saved demo sessions are disabled in production builds; no production portal login is possible until the frontend is connected to real backend authentication and authorization.
+
+Company registration is intentionally blocked unless both approved legal documents are configured. No draft legal text is presented as approved. A development-only application mock is used because the existing FastAPI `/auth/register` endpoint immediately creates an active company/admin (and later sign-ups can join as dispensers); it is not suitable for the pending approval flow. The existing API does not currently expose company applications, reviewer/payment approval, or one-time staff invitations.
+
+The application status, payment reference, review decisions, invitations, and notification settings are development demonstrations, not official records. The frontend does not issue a payment, confirm payment, send an invitation, deliver notifications, create an administrator credential, or activate a company. The platform review route is available only in Vite development mode and has no reviewer authentication or audit trail. Do not use these features for real company data or account approvals.
+
+The production app must connect an authenticated backend that enforces company status and role permissions on every request. Existing backend endpoints include `/companies/me`, `/companies/me/audit-logs`, and admin-only `/users`; they are not wired to this mock UI. Backend notification preferences and delivery/verification state, company profile/subscription data, staff invitation lifecycle, application review/audit records, and payment-provider verification are still required.
+
+### Company registration configuration
+
+Set these Vite environment variables only after the named documents are formally approved by the responsible organization:
+
+| Variable | Purpose |
+| --- | --- |
+| `VITE_LEGAL_DOCUMENTS_APPROVED` | Must be exactly `true` to enable the legal-consent control. |
+| `VITE_LEGAL_TERMS_URL` / `VITE_LEGAL_TERMS_VERSION` | HTTPS link and version of the approved Terms of Service. |
+| `VITE_LEGAL_PRIVACY_URL` / `VITE_LEGAL_PRIVACY_VERSION` | HTTPS link and version of the approved Privacy Notice. |
+| `VITE_REGISTRATION_FEE_GHS` | Optional configured fee for display; no amount is assumed by the UI. |
+
+Even when legal configuration is present, company submission is only available through the development mock. Production registration remains blocked until a pending-application backend is implemented. No payment provider is connected and a configured amount does not enable a payment. Do not set the approval flag or fee to fabricated values.
 
 ## Data behavior
 

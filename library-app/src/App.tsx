@@ -16,6 +16,10 @@ import Landing from './pages/Landing';
 import SignIn from './pages/SignIn';
 import SignUp from './pages/SignUp';
 import ForgotPassword from './pages/ForgotPassword';
+import ApplicationStatus from './pages/ApplicationStatus';
+import CompanyPortal from './pages/CompanyPortal';
+import PlatformReview from './pages/PlatformReview';
+import StaffInvitation from './pages/StaffInvitation';
 import { InventoryProvider } from './api/useInventory';
 import { AuthProvider, useAuth } from './api/useAuth';
 
@@ -70,9 +74,12 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
 // ─── Protected Route ──────────────────────────────────────────────────────────
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   if (!isAuthenticated) {
     return <Navigate to="/signin" replace />;
+  }
+  if (user?.companyStatus !== 'approved_active') {
+    return <Navigate to={`/application-status?email=${encodeURIComponent(user?.email ?? '')}`} replace />;
   }
   return <>{children}</>;
 }
@@ -80,6 +87,13 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
 function AdminRoute({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   return user?.role === 'admin' ? <>{children}</> : <Navigate to="/dashboard" replace />;
+}
+
+function CompanyAdminRoute({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return user?.role === 'admin' && user.companyStatus === 'approved_active'
+    ? <>{children}</>
+    : <Navigate to="/dashboard" replace />;
 }
 
 // ─── Authenticated App Shell ─────────────────────────────────────────────────
@@ -146,6 +160,7 @@ function AppShell() {
           <Route path="/reports" element={<AdminRoute><Reports /></AdminRoute>} />
           <Route path="/insights" element={<AdminRoute><Insights /></AdminRoute>} />
           <Route path="/settings" element={<AdminRoute><Settings /></AdminRoute>} />
+          <Route path="/company" element={<CompanyAdminRoute><CompanyPortal /></CompanyAdminRoute>} />
 
           {/* Fallback for authenticated users */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -170,6 +185,9 @@ function AppRouter() {
       <Route path="/signin" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <SignIn />} />
       <Route path="/signup" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <SignUp />} />
       <Route path="/forgot-password" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <ForgotPassword />} />
+      <Route path="/application-status" element={<ApplicationStatus />} />
+      <Route path="/invite/:inviteId" element={<StaffInvitation />} />
+      <Route path="/platform-review" element={import.meta.env.DEV ? <PlatformReview /> : <Navigate to="/" replace />} />
 
       {/* Protected app routes */}
       <Route path="/*" element={<ProtectedRoute><AppShell /></ProtectedRoute>} />

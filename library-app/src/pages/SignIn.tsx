@@ -117,11 +117,13 @@ export default function SignIn() {
             <Link to="/signup" id="link-to-signup">Sign up</Link>
           </div>
 
-          <div className="auth-demo-box">
-            <strong>Quick Demo Login:</strong>
-            <code>admin@expireguard.com / admin123</code>
-            <code>dispenser@expireguard.com / dispenser123</code>
-          </div>
+          {import.meta.env.DEV && (
+            <div className="auth-demo-box">
+              <strong>Quick Demo Login:</strong>
+              <code>admin@expireguard.com / admin123</code>
+              <code>dispenser@expireguard.com / dispenser123</code>
+            </div>
+          )}
         </div>
       </div>
     </div>
