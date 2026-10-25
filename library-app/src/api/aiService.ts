@@ -50,6 +50,26 @@ export interface ChatMessage {
   charts?: MiniChartData[];
   followUpSuggestions?: string[];
   isPinned?: boolean;
+  /** 'advice' = verified data plus general business knowledge */
+  answerMode?: 'data' | 'advice';
+  /** A file shared with the assistant (shown as a card with Import / Keep buttons) */
+  sharedFile?: SharedFile;
+}
+
+export type SharedFileKind = 'INVENTORY' | 'SALES_HISTORY' | 'OTHER';
+export type SharedFileStatus = 'PENDING' | 'KEPT' | 'IMPORTED';
+
+export interface SharedFile {
+  id: string;
+  filename: string;
+  fileType: string;
+  kind: SharedFileKind;
+  status: SharedFileStatus;
+  rowCount: number;
+  columns: string[];
+  summary: Record<string, unknown> & { description?: string; suggested_action?: 'IMPORT' | 'KEEP' };
+  canImport: boolean;
+  createdAt: string;
 }
 
 export interface Conversation {
@@ -174,6 +194,7 @@ interface ApiChatResponse {
   data_sources_used: string[];
   tools_invoked: string[];
   charts: Record<string, unknown>[];
+  answer_mode?: 'data' | 'advice';
 }
 
 interface ApiConversation {
@@ -259,6 +280,8 @@ function fromStoredMessage(m: ApiMessage): ChatMessage {
     toolsInvoked: Array.isArray(meta.tools_invoked) ? (meta.tools_invoked as string[]) : undefined,
     seasonalCard: toSeasonalCard(meta.seasonal_card as ApiSeasonalCard | null | undefined),
     followUpSuggestions: Array.isArray(meta.follow_up_suggestions) ? (meta.follow_up_suggestions as string[]) : undefined,
+    charts: toCharts(Array.isArray(meta.charts) ? (meta.charts as Record<string, unknown>[]) : undefined),
+    answerMode: meta.answer_mode === 'advice' ? 'advice' : 'data',
   };
 }
 
@@ -288,6 +311,7 @@ export async function sendChatMessage(message: string, conversationId?: string |
       seasonalCard: toSeasonalCard(res.seasonal_card),
       charts: toCharts(res.charts),
       followUpSuggestions: res.follow_up_suggestions,
+      answerMode: res.answer_mode === 'advice' ? 'advice' : 'data',
     },
   };
 }
@@ -320,4 +344,67 @@ export async function deleteConversation(id: string): Promise<void> {
 export async function fetchSeasonalPlan(season?: 'RAINY' | 'HARMATTAN' | 'BACK_TO_SCHOOL'): Promise<SeasonalCardData | undefined> {
   const query = season ? `?season=${season}` : '';
   return toSeasonalCard(await api<ApiSeasonalCard>(`/ai/seasonal-plan${query}`, { method: 'POST' }));
+}
+
+// ─── Files shared with the assistant ────────────────────────────────────────
+
+interface ApiSharedFile {
+  id: string;
+  filename: string;
+  file_type: string;
+  kind: SharedFileKind;
+  status: SharedFileStatus;
+  row_count: number;
+  columns: string[];
+  summary: SharedFile['summary'];
+  can_import: boolean;
+  created_at: string;
+}
+
+function toSharedFile(f: ApiSharedFile): SharedFile {
+  return {
+    id: f.id,
+    filename: f.filename,
+    fileType: f.file_type,
+    kind: f.kind,
+    status: f.status,
+    rowCount: f.row_count,
+    columns: f.columns,
+    summary: f.summary || {},
+    canImport: f.can_import,
+    createdAt: f.created_at,
+  };
+}
+
+/** Upload an Excel (.xlsx) or CSV file. It is analysed but nothing changes in stock yet. */
+export async function uploadAiFile(file: File): Promise<SharedFile> {
+  const form = new FormData();
+  form.append('file', file);
+  return toSharedFile(await api<ApiSharedFile>('/ai/files', { method: 'POST', form }));
+}
+
+export async function listAiFiles(): Promise<SharedFile[]> {
+  return (await api<ApiSharedFile[]>('/ai/files')).map(toSharedFile);
+}
+
+export async function keepAiFile(id: string): Promise<SharedFile> {
+  return toSharedFile(await api<ApiSharedFile>(`/ai/files/${id}/keep`, { method: 'POST' }));
+}
+
+export interface ImportFileResult {
+  file: SharedFile;
+  message: string;
+  batchesCreated: number;
+}
+
+export async function importAiFile(id: string): Promise<ImportFileResult> {
+  const res = await api<{ dataset: ApiSharedFile; message: string; batches_created: number }>(
+    `/ai/files/${id}/import`,
+    { method: 'POST' },
+  );
+  return { file: toSharedFile(res.dataset), message: res.message, batchesCreated: res.batches_created };
+}
+
+export async function deleteAiFile(id: string): Promise<void> {
+  await api(`/ai/files/${id}`, { method: 'DELETE' });
 }

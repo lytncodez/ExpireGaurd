@@ -2,6 +2,7 @@
 
 from app.core.database import Base
 from app.models.ai_conversation import AIConversation, AIMessage, MessageRole
+from app.models.ai_dataset import AIDataset, DatasetKind, DatasetStatus
 from app.models.alert import EXPIRY_ALERT_TYPES, SEVERITY_RANK, Alert, AlertSeverity, AlertType
 from app.models.audit_log import AuditAction, AuditLog
 from app.models.batch import Batch, BatchStatus, WorkflowReason, WorkflowStatus
@@ -19,6 +20,9 @@ from app.models.user import RevokedToken, User, UserRole
 __all__ = [
     "Base",
     "AIConversation",
+    "AIDataset",
+    "DatasetKind",
+    "DatasetStatus",
     "AIMessage",
     "Insight",
     "InsightCategory",

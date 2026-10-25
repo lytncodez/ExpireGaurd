@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
+
+from app.schemas.types import OptionalPhone, Phone
 
 
 class CamelModel(BaseModel):
@@ -34,3 +36,28 @@ class PharmacySettings(ThresholdSettings):
     currency: str
     timezone: str
     low_stock_threshold: int = Field(description="Sellable units at/below which a batch shows as Low Stock")
+
+
+class NotificationSettingsUpdate(CamelModel):
+    """What an admin can change on the Settings > Alerts & notifications card."""
+
+    alert_phone_numbers: list[Phone] = Field(
+        default_factory=list, max_length=10,
+        description="Extra numbers that receive SMS alerts, e.g. 0241234567 or +233241234567",
+    )
+    pharmacy_phone: OptionalPhone = Field(default=None, description="Used when no admin has a phone number")
+    email_digest_enabled: bool = Field(default=True, description="Daily expiry email to admins")
+
+    @field_validator("alert_phone_numbers")
+    @classmethod
+    def _dedupe(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(value))
+
+
+class NotificationSettings(NotificationSettingsUpdate):
+    admin_phones: list[str] = Field(default_factory=list, description="Admins' own phone numbers (read-only)")
+    admin_emails: list[str] = Field(default_factory=list, description="Where alert and digest emails go")
+    sms_recipients: list[str] = Field(default_factory=list, description="Everyone who will get SMS alerts")
+    sms_mode: str
+    sms_provider: str
+    email_mode: str

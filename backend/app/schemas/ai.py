@@ -69,6 +69,8 @@ class ChatResponse(BaseModel):
     data_sources_used: list[str] = Field(default_factory=list)
     tools_invoked: list[str] = Field(default_factory=list)
     charts: list[dict[str, Any]] = Field(default_factory=list)
+    answer_mode: str = Field(default="data", description="'data' = only verified data; 'advice' = data plus general "
+                             "business knowledge")
 
 
 class MessageRead(ORMModel):
@@ -102,3 +104,75 @@ class AIStatus(BaseModel):
     is_mock: bool
     configured_provider: str
     fallback_reason: str | None = Field(description="Why the mock provider is used instead of the configured one")
+
+
+# --------------------------------------------------------------------------- files shared with the assistant
+
+
+class DatasetRead(ORMModel):
+    id: uuid.UUID
+    filename: str
+    file_type: str
+    kind: str = Field(description="INVENTORY | SALES_HISTORY | OTHER")
+    status: str = Field(description="PENDING | KEPT | IMPORTED")
+    row_count: int
+    columns: list[str]
+    summary: dict[str, Any]
+    import_job_id: uuid.UUID | None = None
+    created_at: datetime
+    can_import: bool = False
+    preview_rows: list[dict[str, Any]] = Field(default_factory=list)
+
+    @classmethod
+    def from_model(cls, ds: Any, *, preview: int = 5) -> "DatasetRead":
+        summary = {k: v for k, v in (ds.summary or {}).items() if k != "product_daily_avg"}
+        return cls(
+            id=ds.id, filename=ds.filename, file_type=ds.file_type, kind=getattr(ds.kind, "value", ds.kind),
+            status=getattr(ds.status, "value", ds.status), row_count=ds.row_count, columns=ds.columns,
+            summary=summary, import_job_id=ds.import_job_id, created_at=ds.created_at,
+            can_import=getattr(ds.kind, "value", ds.kind) == "INVENTORY" and ds.content is not None,
+            preview_rows=(ds.rows or [])[:preview],
+        )
+
+
+class DatasetImportResponse(BaseModel):
+    dataset: DatasetRead
+    job_id: uuid.UUID
+    status: str
+    total_rows: int
+    batches_created: int
+    products_created: int
+    failed_rows: int
+    duplicate_rows: int
+    alerts_generated: int
+    message: str
+
+
+class ForecastProduct(BaseModel):
+    product_id: str | None
+    product: str
+    source: str
+    daily_rate: float
+    forecast_units: int
+    trend_pct: float | None
+    stock: int
+    days_of_cover: float | None
+    reorder_units: int
+    expected_revenue: float | None
+    confidence: str
+    history_weeks: int
+
+
+class ForecastResponse(BaseModel):
+    as_of: str
+    horizon_days: int
+    method: str
+    products_count: int
+    total_forecast_units: int
+    total_expected_revenue: float
+    reorder_count: int
+    weekly_history: list[dict[str, Any]]
+    projected_weekly_units: int
+    products: list[ForecastProduct]
+    notes: list[str]
+    charts: list[dict[str, Any]] = Field(default_factory=list)

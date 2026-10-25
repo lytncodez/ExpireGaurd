@@ -29,7 +29,7 @@ from app.core.security import (
 from app.models import AuditAction, Company, RevokedToken, User, UserRole
 from app.schemas.auth import RegisterRequest
 from app.schemas.company import CompanyUpdate
-from app.schemas.user import UserCreate, UserUpdate
+from app.schemas.user import ProfileUpdate, UserCreate, UserUpdate
 from app.services import audit_service
 from app.utils.dates import utcnow
 from app.utils.pagination import PageParams, paginate
@@ -297,6 +297,21 @@ async def update_user(db: AsyncSession, actor: User, user_id: uuid.UUID, data: U
         db, action=AuditAction.USER_UPDATED, company_id=actor.company_id, user_id=actor.id,
         entity_type="user", entity_id=user.id,
         metadata={k: (v.value if hasattr(v, "value") else v) for k, v in changes.items()}, ip_address=ip,
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def update_profile(db: AsyncSession, user: User, data: ProfileUpdate, ip: str | None) -> User:
+    changes = data.model_dump(exclude_unset=True)
+    for field, value in changes.items():
+        if field == "name" and value is None:
+            continue
+        setattr(user, field, value)
+    audit_service.record(
+        db, action=AuditAction.USER_UPDATED, company_id=user.company_id, user_id=user.id,
+        entity_type="user", entity_id=user.id, metadata={"self": True, **changes}, ip_address=ip,
     )
     await db.commit()
     await db.refresh(user)

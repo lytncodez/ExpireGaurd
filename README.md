@@ -77,6 +77,7 @@ Skip the seed to start clean: the first account you create on the Sign Up page b
 ```powershell
 cd backend
 # create the test database once:  CREATE DATABASE expireguard_test;
+alembic upgrade head   # apply new migrations to your normal database
 pytest
 ```
 
@@ -85,6 +86,23 @@ cd library-app
 npm run build      # type-checks and builds
 npm run lint
 ```
+
+## Alerts, files and forecasts
+
+* **SMS to any mobile number:** Settings > Alerts & Notifications. Add numbers like `0241234567` (Ghana `+233` is added
+  for you). Every admin can also save their own number there. Expiry SMS go to admins' numbers plus these extra numbers
+  through Africa's Talking (`SMS_MODE=live`, `SMS_PROVIDER=africastalking`).
+* **Daily expiry email:** after the morning expiry check every admin gets one email listing expired, critical and
+  action-required batches. Switch it off per pharmacy in Settings, or send it now with the "Send today's expiry email"
+  button (`POST /alerts/send-digest`).
+* **Files in the AI chat:** use the paperclip in AI Insights to share an Excel (.xlsx) or CSV file. A stock list can be
+  imported straight into inventory; sales history or other files can be kept for analysis. Kept files are used by the
+  assistant and the forecast (`/ai/files`).
+* **Forecast:** ask "Forecast my sales for the next month" or call `GET /ai/forecast` for expected units per product,
+  days of cover and reorder suggestions (12-week moving average with a damped trend).
+* **Marketing and general questions:** questions about marketing, promotions or growing sales get "advice mode"
+  answers that mix your real data with general business tips (marked in the chat). Full open-ended answers need a real
+  AI provider: set `AI_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` in `backend/.env`.
 
 ## Notes
 

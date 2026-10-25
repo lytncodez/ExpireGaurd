@@ -15,7 +15,7 @@ from app.schemas.auth import (
     TokenResponse,
 )
 from app.schemas.company import CompanyRead
-from app.schemas.user import UserRead
+from app.schemas.user import ProfileUpdate, UserRead
 from app.services import auth_service
 from app.utils.helpers import client_ip
 
@@ -76,6 +76,17 @@ async def logout(user: CurrentUser, payload: TokenPayload, request: Request, db:
 )
 async def me(user: CurrentUser) -> UserRead:
     return UserRead.model_validate(user)
+
+
+@router.patch(
+    "/me",
+    response_model=UserRead,
+    summary="Update my profile",
+    description="Change your own name or phone number. Admins' phone numbers receive SMS expiry alerts.",
+    responses=error_responses(401, 422),
+)
+async def update_me(data: ProfileUpdate, user: CurrentUser, request: Request, db: DbSession) -> UserRead:
+    return UserRead.model_validate(await auth_service.update_profile(db, user, data, client_ip(request)))
 
 
 @router.post(

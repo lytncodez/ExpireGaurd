@@ -12,10 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base import AIProvider, AIProviderError, AITask
-from app.ai.context_builder import INTENT_SECTIONS, build_context, detect_intent
+from app.ai.context_builder import INTENT_SECTIONS, OPEN_INTENTS, build_context, detect_intent, forecast_horizon_for
 from app.ai.guardrails import AIOutputError, collect_facts, parse_json_object, validate_chat, validate_model
 from app.ai.prompts import SYSTEM_RULES, chat_prompt
 from app.ai.providers.mock_provider import build_chat
+from app.services.forecast_service import forecast_charts
 from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.core.logging import get_logger
@@ -86,10 +87,11 @@ async def delete_conversation(db: AsyncSession, user: User, conversation_id: uui
     await db.commit()
 
 
-def _grounded_fallback(ctx: dict, intent: str, question: str, facts) -> tuple[ModelChatOutput, bool]:
+def _grounded_fallback(ctx: dict, intent: str, question: str, facts, *,
+                       open_mode: bool = False) -> tuple[ModelChatOutput, bool]:
     try:
         out = validate_model(build_chat(ctx, intent, question), ModelChatOutput)
-        if validate_chat(out, ctx, facts).ok:
+        if validate_chat(out, ctx, facts, open_mode=open_mode).ok:
             return out, True  # type: ignore[return-value]
     except AIOutputError:
         logger.exception("Deterministic chat fallback failed validation")
@@ -116,19 +118,21 @@ async def chat(
     history = [{"role": m.role.value, "content": m.content} for m in history_rows]
 
     intent = detect_intent(question)
-    ctx = await build_context(db, user.company_id, sections=INTENT_SECTIONS[intent], intent=intent)
+    ctx = await build_context(db, user.company_id, sections=INTENT_SECTIONS[intent], intent=intent,
+                              forecast_horizon=forecast_horizon_for(question))
     facts = collect_facts(ctx)  # numbers typed by the user are NOT treated as verified facts
+    open_mode = intent in OPEN_INTENTS
 
     provider_name, model_name = provider.name, provider.model
     fallback_used = False
     violations: list[str] = []
     try:
         response = await provider.generate_response(
-            ctx, chat_prompt(intent, question), system=SYSTEM_RULES, task=AITask.CHAT, history=history
+            ctx, chat_prompt(intent, question, advice=open_mode), system=SYSTEM_RULES, task=AITask.CHAT, history=history
         )
         provider_name, model_name = response.provider, response.model
         out: ModelChatOutput = validate_model(parse_json_object(response.text), ModelChatOutput)  # type: ignore[assignment]
-        result = validate_chat(out, ctx, facts)
+        result = validate_chat(out, ctx, facts, open_mode=open_mode)
         if not result.ok:
             violations = result.violations[:10]
             raise AIOutputError("Guardrail violations: " + "; ".join(violations[:3]))
@@ -136,7 +140,7 @@ async def chat(
     except (AIProviderError, AIOutputError) as exc:
         logger.warning("Chat answer replaced by grounded fallback: %s", exc)
         violations = violations or [str(exc)[:300]]
-        out, grounded = _grounded_fallback(ctx, intent, question, facts)
+        out, grounded = _grounded_fallback(ctx, intent, question, facts, open_mode=open_mode)
         fallback_used = True
 
     seasonal_card = out.seasonal_card
@@ -157,6 +161,16 @@ async def chat(
     if intent == "SUPPLIER_REVIEW":
         data_sources_used.append("Supplier Delivery Log")
         tools_invoked.append("get_supplier_history")
+    if ctx.get("forecast", {}).get("products"):
+        data_sources_used.append("Demand Forecast (moving average + trend)")
+        tools_invoked.append("forecast_demand")
+    if ctx.get("datasets"):
+        data_sources_used.append("Files you uploaded")
+        tools_invoked.append("read_uploaded_files")
+    if open_mode:
+        data_sources_used.append("General business & marketing knowledge")
+    charts = list(out.charts) or forecast_charts(ctx)
+    answer_mode = "advice" if open_mode else "data"
 
     db.add(AIMessage(conversation_id=conv.id, role=MessageRole.USER, content=question))
     await db.flush()
@@ -177,6 +191,8 @@ async def chat(
             "data_sources_used": data_sources_used,
             "tools_invoked": tools_invoked,
             "follow_up_suggestions": out.follow_up_suggestions,
+            "charts": charts,
+            "answer_mode": answer_mode,
         },
     )
     db.add(assistant)
@@ -203,5 +219,6 @@ async def chat(
         seasonal_card=seasonal_card,
         data_sources_used=data_sources_used,
         tools_invoked=tools_invoked,
-        charts=out.charts,
+        charts=charts,
+        answer_mode=answer_mode,
     )

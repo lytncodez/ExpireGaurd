@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
 
 from app.core.exceptions import error_responses
 from app.dependencies.auth import AdminUser, StaffUser
@@ -75,6 +76,26 @@ async def test_email(data: TestEmailRequest, user: AdminUser, db: DbSession) -> 
     return NotificationRead.model_validate(
         await notification_service.send_test_email(db, user, str(data.email), data.message)
     )
+
+
+class DigestResponse(BaseModel):
+    sent: int
+    failed: int
+    skipped_reason: str | None
+    expired: int
+    critical: int
+    action_required: int
+    recipients: list[str]
+
+
+@router.post("/send-digest", response_model=DigestResponse, summary="Email today's expiry digest now",
+             description="Emails every admin the list of expired, critical and action-required batches right away "
+                         "(the same email that goes out automatically each morning). ADMIN.",
+             responses=error_responses(401, 403))
+async def send_digest(user: AdminUser, db: DbSession) -> DigestResponse:
+    from app.services.digest_service import send_expiry_digest
+
+    return DigestResponse(**(await send_expiry_digest(db, user.company_id, manual=True)).as_dict())
 
 
 @router.get("/{alert_id}", response_model=AlertRead, summary="Get alert",

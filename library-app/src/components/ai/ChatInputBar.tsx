@@ -6,6 +6,9 @@ interface ChatInputBarProps {
   onStopStreaming: () => void;
   dataSourcesUsed?: string[];
   disabled?: boolean;
+  /** Called with an Excel / CSV file the user picked with the paperclip button */
+  onAttachFile?: (file: File) => void;
+  uploading?: boolean;
 }
 
 export default function ChatInputBar({
@@ -14,8 +17,11 @@ export default function ChatInputBar({
   onStopStreaming,
   dataSourcesUsed = ['Stock Ledger', 'FEFO Engine', 'Sales History (30d)'],
   disabled = false,
+  onAttachFile,
+  uploading = false,
 }: ChatInputBarProps) {
   const [text, setText] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -137,13 +143,58 @@ export default function ChatInputBar({
           )}
         </button>
 
+        {/* Attach an Excel / CSV file */}
+        {onAttachFile && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx"
+              style={{ display: 'none' }}
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) onAttachFile(file);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled || uploading || isStreaming}
+              title="Share an Excel or CSV file (stock list or sales history)"
+              style={{
+                background: '#F1F5F9',
+                color: '#64748B',
+                border: 'none',
+                width: '38px',
+                height: '38px',
+                borderRadius: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: disabled || uploading ? 'default' : 'pointer',
+                flexShrink: 0,
+                opacity: uploading ? 0.6 : 1,
+              }}
+            >
+              {uploading ? (
+                <span style={{ fontSize: '0.7rem', fontWeight: 800 }}>…</span>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+              )}
+            </button>
+          </>
+        )}
+
         {/* Text Area */}
         <textarea
           ref={textareaRef}
           value={text}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          placeholder={isListening ? 'Listening to your voice...' : 'Ask about stock, expiry runout, seasonal buying plans...'}
+          placeholder={isListening ? 'Listening to your voice...' : 'Ask anything: stock, expiry, forecasts, marketing ideas... or attach a file'}
           rows={1}
           disabled={disabled || isStreaming}
           style={{

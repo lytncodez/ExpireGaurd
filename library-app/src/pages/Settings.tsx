@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect } from 'react';
 import { useAuth } from '../api/useAuth';
 import { useInventory } from '../api/useInventory';
 import { api, errorMessage } from '../api/client';
+import NotificationSettingsCard from '../components/NotificationSettingsCard';
 
 interface UserRecord {
   id: string;
@@ -755,6 +756,8 @@ export default function Settings() {
         </button>
       </div>
 
+      {/* SECTION 5: SMS & email alerts */}
+      <NotificationSettingsCard onToast={showToast} />
     </div>
   );
 }

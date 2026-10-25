@@ -39,6 +39,13 @@ class UserCreated(UserRead):
     )
 
 
+class ProfileUpdate(BaseModel):
+    """What any signed-in user can change on their own account."""
+
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    phone_number: OptionalPhone = Field(default=None, description="e.g. 0241234567 or +233241234567; null removes it")
+
+
 class UserUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=200)
     phone_number: OptionalPhone = None

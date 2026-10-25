@@ -3,12 +3,16 @@ import { useInventory } from '../api/useInventory';
 import { api, ApiError, errorMessage } from '../api/client';
 import {
   deleteConversation,
+  importAiFile,
+  keepAiFile,
   listConversations,
   loadConversation,
   sendChatMessage,
   updateConversation,
+  uploadAiFile,
   type ChatMessage,
   type Conversation,
+  type SharedFile,
 } from '../api/aiService';
 import ConversationSidebar from '../components/ai/ConversationSidebar';
 import ChatInputBar from '../components/ai/ChatInputBar';
@@ -17,6 +21,7 @@ import QuickPresetsRow from '../components/ai/QuickPresetsRow';
 import FollowUpChips from '../components/ai/FollowUpChips';
 import SeasonalRecommendationCard from '../components/ai/SeasonalRecommendationCard';
 import MiniChart from '../components/ai/MiniChart';
+import SharedFileCard from '../components/ai/SharedFileCard';
 import MarkdownRenderer from '../components/ai/MarkdownRenderer';
 import ExistingInsightsTabs, { type InsightItem } from '../components/ai/ExistingInsightsTabs';
 
@@ -133,6 +138,97 @@ export default function Insights() {
 
   const patchConversation = (id: string, change: (c: Conversation) => Conversation) =>
     setConversations(prev => prev.map(c => (c.id === id ? change(c) : c)));
+
+  // Files shared with the assistant (Excel / CSV)
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [fileBusyId, setFileBusyId] = useState<string | null>(null);
+
+  /** Replace a file card everywhere it appears after Import / Keep. */
+  const updateSharedFile = (file: SharedFile) =>
+    setConversations(prev =>
+      prev.map(c => ({
+        ...c,
+        messages: c.messages.map(m => (m.sharedFile?.id === file.id ? { ...m, sharedFile: file } : m)),
+      })),
+    );
+
+  const addLocalMessages = (convId: string, ...added: ChatMessage[]) =>
+    patchConversation(convId, c => ({ ...c, updatedAt: new Date().toISOString(), messages: [...c.messages, ...added] }));
+
+  const handleAttachFile = async (file: File) => {
+    if (uploadingFile) return;
+    let convId = activeConvId;
+    if (!convId || !conversations.some(c => c.id === convId)) {
+      convId = `${DRAFT_PREFIX}${Date.now()}`;
+      const draft: Conversation = {
+        id: convId,
+        title: shortTitle(`File: ${file.name}`),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isPinned: false,
+        messages: [],
+      };
+      setConversations(prev => [draft, ...prev]);
+      setActiveConvId(convId);
+    }
+    const target = convId;
+    addLocalMessages(target, { id: `local-file-${Date.now()}`, role: 'user', content: `📎 Shared a file: **${file.name}**`, timestamp: nowLabel() });
+    setUploadingFile(true);
+    setErrorMessage(null);
+    try {
+      const shared = await uploadAiFile(file);
+      const intro =
+        shared.kind === 'INVENTORY'
+          ? 'I read your stock list. Do you want to import it into your inventory, or keep it only for analysis?'
+          : shared.kind === 'SALES_HISTORY'
+            ? 'I read your sales history. Keep it and I will use it for answers and the demand forecast.'
+            : 'I read your file. Keep it and I can use it when answering your questions.';
+      addLocalMessages(target, {
+        id: `local-file-reply-${Date.now()}`,
+        role: 'assistant',
+        content: intro,
+        timestamp: nowLabel(),
+        sharedFile: shared,
+        answerMode: 'data',
+      });
+    } catch (err) {
+      setErrorMessage(`Could not read ${file.name}: ${errorMessage(err)}`);
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const handleKeepFile = async (file: SharedFile) => {
+    setFileBusyId(file.id);
+    try {
+      updateSharedFile(await keepAiFile(file.id));
+    } catch (err) {
+      setErrorMessage(errorMessage(err));
+    } finally {
+      setFileBusyId(null);
+    }
+  };
+
+  const handleImportFile = async (file: SharedFile) => {
+    setFileBusyId(file.id);
+    try {
+      const result = await importAiFile(file.id);
+      updateSharedFile(result.file);
+      if (activeConvId) {
+        addLocalMessages(activeConvId, {
+          id: `local-import-${Date.now()}`,
+          role: 'assistant',
+          content: `${result.message} The new batches are now in your inventory and checked for expiry.`,
+          timestamp: nowLabel(),
+          answerMode: 'data',
+        });
+      }
+    } catch (err) {
+      setErrorMessage(errorMessage(err));
+    } finally {
+      setFileBusyId(null);
+    }
+  };
 
   // ─── Load history & insights ───────────────────────────────────────────────
 
@@ -611,9 +707,15 @@ export default function Insights() {
                               <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#1E3A4C' }}>
                                 ExpireGuard Assistant
                               </div>
-                              <div style={{ fontSize: '0.68rem', color: '#10B981', fontWeight: 700 }}>
-                                Grounded in verified stock numbers
-                              </div>
+                              {msg.answerMode === 'advice' ? (
+                                <div style={{ fontSize: '0.68rem', color: '#B45309', fontWeight: 700 }}>
+                                  Your data + general business advice
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '0.68rem', color: '#10B981', fontWeight: 700 }}>
+                                  Grounded in verified stock numbers
+                                </div>
+                              )}
                             </div>
                           </div>
 
@@ -628,6 +730,17 @@ export default function Insights() {
                           <SeasonalRecommendationCard
                             card={msg.seasonalCard}
                             onAskFollowUp={prompt => handleSendMessage(prompt)}
+                          />
+                        )}
+
+                        {/* File shared with the assistant: Import / Keep */}
+                        {msg.sharedFile && (
+                          <SharedFileCard
+                            file={msg.sharedFile}
+                            busy={fileBusyId === msg.sharedFile.id}
+                            onImport={f => void handleImportFile(f)}
+                            onKeep={f => void handleKeepFile(f)}
+                            onAsk={prompt => void handleSendMessage(prompt)}
                           />
                         )}
 
@@ -907,6 +1020,8 @@ export default function Insights() {
               onStopStreaming={handleStopStreaming}
               dataSourcesUsed={lastAssistantMessage?.dataSourcesUsed}
               disabled={isLoading}
+              onAttachFile={file => void handleAttachFile(file)}
+              uploading={uploadingFile}
             />
           </div>
         </div>

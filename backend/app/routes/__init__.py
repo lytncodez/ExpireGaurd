@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.routes import (
     ai,
+    ai_files,
     alerts,
     analytics,
     auth,
@@ -28,6 +29,6 @@ from app.routes import (
 api_router = APIRouter()
 for module in (
     health, auth, users, companies, settings, items, categories, products, batches, inventory, sales, imports,
-    barcode, expiry, alerts, notifications, analytics, dashboard, insights, ai,
+    barcode, expiry, alerts, notifications, analytics, dashboard, insights, ai, ai_files,
 ):
     api_router.include_router(module.router)

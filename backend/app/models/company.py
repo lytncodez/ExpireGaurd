@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -31,3 +32,7 @@ class Company(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     alert_action: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     alert_monitor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     alert_advisory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    # Extra numbers that receive SMS alerts (besides admins' own phones), e.g. the pharmacist on duty.
+    alert_phones: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    # Daily expiry email digest to admins.
+    email_digest_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

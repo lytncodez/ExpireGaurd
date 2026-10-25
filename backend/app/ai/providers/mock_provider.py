@@ -469,22 +469,172 @@ def build_chat(ctx: dict[str, Any], intent: str, question: str = "") -> dict[str
                 evidence += r["supporting_evidence"][:1]
         else:
             lines.append("Nothing in the current data requires urgent attention.")
+    elif intent == "BUSINESS_ADVICE":
+        lines, evidence, follow = _advice_answer(ctx, cur)
+    elif intent == "WASTE_REDUCTION":
+        lines, evidence, follow = _waste_answer(ctx)
+    elif intent == "FORECAST":
+        lines, evidence, insufficient = _forecast_answer(ctx)
+        follow = ["What should I reorder this week?", "Which products are slowing down?",
+                  "How can I increase sales of my slow movers?"]
+    elif intent == "DATASETS":
+        lines, evidence, insufficient = _datasets_answer(ctx)
+        follow = ["Forecast my sales for the next 30 days", "How can I improve sales?",
+                  "Which products are at highest expiry risk?"]
     else:
         inv = ctx.get("inventory") or {}
         alerts = ctx.get("alerts") or {}
+        lines.append("I'm not sure I understood that one, so here's where things stand and what I can help with.")
         if inv:
-            lines.append(f"You have {inv['total_units']} units in stock across {inv['total_products']} products.")
+            snapshot = f"Right now you have **{inv['total_units']} units** across **{inv['total_products']} products**"
+            snapshot += f", with **{alerts['open_total']} open alerts** waiting for review." if alerts else "."
+            lines.append(snapshot)
             evidence.append(_ev("Total units", inv["total_units"], "inventory.total_units"))
-        if alerts:
-            lines.append(f"There are {alerts['open_total']} open alerts.")
-            evidence.append(_ev("Open alerts", alerts["open_total"], "alerts.open_total"))
-        lines.append("I can answer questions about expiry risk, slow-moving or overstocked products, low stock, "
-                     "sales trends, anomalies and today's priorities, using ExpireGuard's verified data.")
+            if alerts:
+                evidence.append(_ev("Open alerts", alerts["open_total"], "alerts.open_total"))
+        lines += [
+            "Try asking me things like:",
+            "- \"How can I cut expiry waste?\"",
+            "- \"What will sell most next month?\"",
+            "- \"Give me marketing ideas for my slow movers\"",
+            "- \"What should I focus on today?\"",
+            "> Tip for the admin: connect an AI provider (Anthropic) on the server and I can answer any question in "
+            "full, not just the ones above.",
+        ]
+        follow = ["How can I cut expiry waste?", "What should I prioritise today?", "Give me marketing ideas"]
         if not inv and not alerts:
             insufficient = True
 
     return {"answer": "\n".join(lines), "evidence": evidence[:30], "insufficient_evidence": insufficient,
             "follow_up_suggestions": follow}
+
+
+def _unique_patterns(ctx: dict[str, Any], types: set[str]) -> list[tuple[int, dict[str, Any]]]:
+    seen: set[str] = set()
+    out = []
+    for i, p in enumerate(ctx.get("patterns") or []):
+        if p["type"] in types and p["product_id"] not in seen:
+            seen.add(p["product_id"])
+            out.append((i, p))
+    return out
+
+
+_SLOW_TYPES = {"HIGH_STOCK_LOW_SALES", "HIGH_STOCK_LOW_SALES_SHORT_EXPIRY", "SLOW_MOVER"}
+
+
+def _advice_answer(ctx: dict[str, Any], cur: str) -> tuple[list[str], list[dict[str, Any]], list[str]]:
+    """Offline marketing / sales advice built from the pharmacy's real data plus general good practice."""
+    evidence: list[dict[str, Any]] = []
+    lines: list[str] = ["Good question. Here's how I'd grow sales, starting with what your own numbers say."]
+    top = (ctx.get("sales") or {}).get("top_products") or []
+    if top:
+        names = ", ".join(p["product"] for p in top[:3])
+        lines += ["### 1. Lean on what already sells",
+                  f"Your best sellers are **{names}**. People already come in for these, so put related items "
+                  "right beside them (for example vitamins next to cold remedies) and mention them in your "
+                  "WhatsApp status."]
+        evidence.append(_ev(f"{top[0]['product']} units sold", top[0]["units_sold"], "sales.top_products[0].units_sold"))
+    slow = _unique_patterns(ctx, _SLOW_TYPES)
+    if slow:
+        names = ", ".join(p["product"] for _, p in slow[:3])
+        lines += ["### 2. Give slow stock a push",
+                  f"**{names}** {'is' if len(slow) == 1 else 'are'} moving slowly. A simple bundle (\"buy this, get "
+                  "that at a small discount\") or a \"pharmacist's pick\" card on the shelf usually works better "
+                  "than a deep price cut."]
+        i, p = slow[0]
+        evidence.append(_ev(f"{p['product']} stock", p["evidence"]["stock"], f"patterns[{i}].evidence.stock"))
+    risks = ctx.get("expiry_risks") or []
+    if risks:
+        r = risks[0]
+        lines += ["### 3. Sell short-dated stock before it's too late",
+                  f"**{r['product']}** (batch {r['batch_number']}) has only {_days(r['days_remaining'])} left. "
+                  "A short, clearly-timed offer now beats writing it off later."]
+        evidence.append(_ev(f"{r['product']} days remaining", r["days_remaining"], "expiry_risks[0].days_remaining"))
+    lines += [
+        "### Ideas that work well for community pharmacies",
+        "- Build a **WhatsApp broadcast list** (with customers' permission) for health tips and restock news.",
+        "- Run a **free blood-pressure or sugar check day** each week. It brings people in and builds trust.",
+        "- Offer **refill reminders** for regular buyers of chronic-care products.",
+        "- Keep promotions to over-the-counter and wellness items, and check Ghana FDA / Pharmacy Council rules "
+        "before promoting any medicine.",
+        "Try one idea at a time for two weeks and compare that product's sales before and after.",
+    ]
+    follow = ["Which products are slow movers?", "Forecast my sales for the next 30 days",
+              "How can I cut expiry waste?"]
+    return lines, evidence, follow
+
+
+def _waste_answer(ctx: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]], list[str]]:
+    """Offline expiry-waste reduction plan from the pharmacy's own data plus good practice."""
+    evidence: list[dict[str, Any]] = []
+    lines: list[str] = ["Cutting expiry waste comes down to three things: sell the oldest stock first, buy closer to "
+                        "what you actually sell, and act early on anything short-dated. Here's what that means for "
+                        "you right now."]
+    expired = ctx.get("expired_batches") or []
+    risks = ctx.get("expiry_risks") or []
+    if expired or risks:
+        lines.append("### Act on these first")
+        if expired:
+            e = expired[0]
+            lines.append(f"- **{e['product']}** (batch {e['batch_number']}) has already expired. Take it off the "
+                         "shelf and record it as quarantined or disposed so it can't be sold by mistake.")
+            evidence.append(_ev(f"{e['product']} batch", e["batch_number"], "expired_batches[0].batch_number"))
+        for k, r in enumerate(risks[:3]):
+            lines.append(f"- **{r['product']}** (batch {r['batch_number']}): {_days(r['days_remaining'])} left. "
+                         "Move it to the front, dispense it first, or ask the supplier about a return.")
+            evidence.append(_ev(f"{r['product']} days remaining", r["days_remaining"], f"expiry_risks[{k}].days_remaining"))
+    slow = _unique_patterns(ctx, _SLOW_TYPES)
+    if slow:
+        names = ", ".join(p["product"] for _, p in slow[:3])
+        lines += ["### Buy less of what sits on the shelf",
+                  f"**{names}** {'has' if len(slow) == 1 else 'have'} more stock than recent sales need. Order "
+                  "these in smaller quantities more often, and pause reorders until the current stock moves."]
+        i, p = slow[0]
+        evidence.append(_ev(f"{p['product']} stock", p["evidence"]["stock"], f"patterns[{i}].evidence.stock"))
+    lines += [
+        "### Habits that stop waste for good",
+        "- **First expiry, first out (FEFO):** put new deliveries behind older stock, every time.",
+        "- **Weekly shelf check:** spend ten minutes looking at anything flagged in Alerts.",
+        "- **Check dates on delivery:** refuse or note short-dated stock before you sign for it.",
+        "- **Agree returns with suppliers:** know each supplier's return window and use it before it closes.",
+        "- **Clear early, not late:** a small discount months before expiry loses far less than a write-off.",
+    ]
+    follow = ["Which products are at highest expiry risk?", "What should I stop reordering?",
+              "Which batches can I send back to suppliers?"]
+    return lines, evidence, follow
+
+
+def _forecast_answer(ctx: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]], bool]:
+    fc = ctx.get("forecast") or {}
+    items = fc.get("products") or []
+    if not items:
+        return ["There is not enough sales history yet to make a forecast. Record sales (or upload a sales "
+                "history file) and ask again."], [], True
+    lines = [f"Projected demand for the next {fc['horizon_days']} days ({fc['method']}). "
+             "Projections assume recent patterns continue and may differ from actual sales:"]
+    evidence = [_ev("Forecast horizon (days)", fc["horizon_days"], "forecast.horizon_days")]
+    for i, p in enumerate(items[:6]):
+        cover = f"{p['days_of_cover']} days of cover" if p.get("days_of_cover") is not None else "no recent sales"
+        line = f"- {p['product']}: about {p['forecast_units']} units expected, {p['stock']} in stock ({cover})"
+        if p.get("reorder_units"):
+            line += f"; consider reordering about {p['reorder_units']} units"
+        lines.append(line + f". Confidence: {p['confidence']}.")
+        evidence.append(_ev(f"{p['product']} forecast units", p["forecast_units"], f"forecast.products[{i}].forecast_units"))
+    return lines, evidence, False
+
+
+def _datasets_answer(ctx: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]], bool]:
+    files = ctx.get("datasets") or []
+    if not files:
+        return ["You have not shared any files with the assistant yet. Use the paperclip button to upload an "
+                "Excel or CSV file of stock or sales."], [], True
+    lines = ["Files you have shared with the assistant:"]
+    evidence: list[dict[str, Any]] = []
+    for i, d in enumerate(files[:5]):
+        lines.append(f"- {d['filename']} ({d['kind'].replace('_', ' ').lower()}, {d['row_count']} rows): "
+                     f"{d.get('description') or ''}".rstrip(": "))
+        evidence.append(_ev(f"{d['filename']} rows", d["row_count"], f"datasets[{i}].row_count"))
+    return lines, evidence, False
 
 
 class MockProvider(AIProvider):

@@ -210,11 +210,47 @@ def _values_match(claimed: Any, actual: Any) -> bool:
     return str(claimed).strip().lower() == str(actual).strip().lower()
 
 
-def check_text(texts: list[str], facts: ContextFacts) -> tuple[list[str], int]:
+# In advice mode general numbers ("post 3 times a week", "a 10% discount") are allowed, but a figure stated as
+# this pharmacy's stock, sales or money must still be verified.
+_NUM = r"(\d[\d,]*(?:\.\d+)?)"
+DATA_FIGURE_RE = re.compile(
+    r"(?:(?<![A-Za-z])(?:GHS|GH₵|GH¢|USD|NGN|KES|\$|₵)\s?" + _NUM + ")"
+    r"|(?:" + _NUM + r"\s*(?:units?|batch(?:es)?|packs?|in stock|sold|cedis?|GHS|KES|USD|NGN)\b)"
+    r"|(?:\b(?:revenue|sales|stock|profit|income|turnover|inventory value|stock value|worth)\s+"
+    r"(?:is|was|were|of|at|=|:|totals?|totalled|stands at|reached)?\s*(?:about|around|roughly|approximately)?\s*"
+    + _NUM + ")",
+    re.IGNORECASE,
+)
+
+
+def _data_figures(text: str) -> list[tuple[float, int, str]]:
+    out: list[tuple[float, int, str]] = []
+    for m in DATA_FIGURE_RE.finditer(text):
+        raw = next(g for g in m.groups() if g)
+        clean = raw.replace(",", "")
+        try:
+            out.append((float(clean), len(clean.split(".")[1]) if "." in clean else 0, raw))
+        except ValueError:
+            continue
+    return out
+
+
+def check_text(texts: list[str], facts: ContextFacts, *, open_mode: bool = False) -> tuple[list[str], int]:
+    """open_mode (general business advice): only figures about the pharmacy's own data are verified, dates and
+    external factors (seasons, competitors, marketing) may be discussed. Claims of taken actions are always blocked."""
     violations: list[str] = []
     checked = 0
     for text in texts:
         if not text:
+            continue
+        if open_mode:
+            for value, decimals, raw in _data_figures(text):
+                checked += 1
+                if not facts.supports(value, decimals):
+                    violations.append(f"Unsupported data figure '{raw}' (not present in verified context)")
+            for sentence in SENTENCE_SPLIT_RE.split(text):
+                if sentence.strip() and AUTONOMY_RE.search(sentence):
+                    violations.append(f"Claims an action was taken: '{sentence.strip()[:160]}'")
             continue
         for value, decimals, raw in _numbers_in_text(text):
             checked += 1
@@ -272,8 +308,8 @@ def validate_recommendation(out: Any, root: dict[str, Any], facts: ContextFacts)
     return validate_insight_like(out, root, facts, ["title", "action", "rationale"])
 
 
-def validate_chat(out: Any, root: dict[str, Any], facts: ContextFacts) -> GuardrailResult:
+def validate_chat(out: Any, root: dict[str, Any], facts: ContextFacts, *, open_mode: bool = False) -> GuardrailResult:
     texts = [out.answer, *out.follow_up_suggestions]
-    violations, checked = check_text(texts, facts)
+    violations, checked = check_text(texts, facts, open_mode=open_mode)
     violations += check_evidence(out.evidence, root, required=False)
     return GuardrailResult(ok=not violations, violations=violations, checked_numbers=checked)

@@ -28,7 +28,7 @@ from app.utils.pagination import PageParams, paginate
 
 
 async def recipients(db: AsyncSession, company_id: uuid.UUID) -> list[str]:
-    """Active admins with a phone number; falls back to the pharmacy phone."""
+    """Active admins' phones plus the pharmacy's extra alert numbers; falls back to the pharmacy phone."""
     phones = (
         await db.scalars(
             select(User.phone_number)
@@ -41,11 +41,12 @@ async def recipients(db: AsyncSession, company_id: uuid.UUID) -> list[str]:
             .order_by(User.role, User.created_at)
         )
     ).all()
-    unique = list(dict.fromkeys(p for p in phones if p))
+    company = await db.get(Company, company_id)
+    extra = list(company.alert_phones or []) if company else []
+    unique = list(dict.fromkeys(p for p in [*phones, *extra] if p))
     if unique:
         return unique
-    company_phone = await db.scalar(select(Company.phone).where(Company.id == company_id))
-    return [company_phone] if company_phone else []
+    return [company.phone] if company and company.phone else []
 
 
 async def email_recipients(db: AsyncSession, company_id: uuid.UUID) -> list[str]:

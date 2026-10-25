@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     PHARMACY_NAME: str = "My Pharmacy"          # used when the first user signs up
     PHARMACY_CURRENCY: str = "GHS"
     PHARMACY_TIMEZONE: str = "Africa/Accra"
+    # Local numbers typed without a country code (e.g. 0241234567) get this prefix.
+    DEFAULT_PHONE_COUNTRY_CODE: str = "+233"
     ALLOW_PUBLIC_SIGNUP: bool = True            # later sign-ups join the pharmacy as dispensers
     ALLOW_MULTIPLE_COMPANIES: bool = False      # multi-tenant mode (used by the test suite)
 
@@ -121,6 +123,7 @@ class Settings(BaseSettings):
     SCHEDULER_ENABLED: bool = True
     EXPIRY_JOB_HOUR: int = 6
     EXPIRY_JOB_MINUTE: int = 0
+    EMAIL_DIGEST_ENABLED: bool = True  # daily expiry email to admins (each pharmacy can switch it off)
     ALERT_JOB_INTERVAL_MINUTES: int = 30
     CLEANUP_JOB_HOUR: int = 3
     ALERT_RETENTION_DAYS: int = 180

@@ -40,8 +40,16 @@ INTENT_SECTIONS: dict[str, frozenset[str]] = {
     "DAILY_SUMMARY": ALL_SECTIONS,
     "DISCOUNT_CLEARANCE": frozenset({"inventory", "expiry", "patterns"}),
     "PRIORITIES": ALL_SECTIONS,
-    "GENERAL": ALL_SECTIONS,
+    "BUSINESS_ADVICE": frozenset({"inventory", "sales", "products", "patterns", "expiry", "datasets"}),
+    "WASTE_REDUCTION": frozenset({"inventory", "expiry", "products", "patterns", "sales", "alerts"}),
+    "FORECAST": frozenset({"sales", "stock_risks", "products", "patterns", "forecast", "datasets"}),
+    "DATASETS": frozenset({"datasets", "inventory"}),
+    "GENERAL": ALL_SECTIONS | {"datasets"},
 }
+
+# Intents where the model may add general business knowledge (marketing, sales growth, pharmacy practice)
+# on top of the verified data. Figures about THIS pharmacy must still come from the context.
+OPEN_INTENTS = frozenset({"BUSINESS_ADVICE", "WASTE_REDUCTION", "GENERAL"})
 
 CATEGORY_SECTIONS: dict[InsightCategory, frozenset[str]] = {
     InsightCategory.EXPIRY: frozenset({"inventory", "expiry", "alerts"}),
@@ -54,6 +62,19 @@ CATEGORY_SECTIONS: dict[InsightCategory, frozenset[str]] = {
 }
 
 _INTENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    ("WASTE_REDUCTION", ("curb", "reduce waste", "reduce wastage", "reduce expir", "cut waste", "less waste",
+                         "minimi", "prevent", "avoid", "stop losing", "stop wast", "wastage", "how to reduce",
+                         "how can i reduce", "how do i reduce")),
+    ("BUSINESS_ADVICE", ("marketing", "market ", "promot", "advert", "social media", "whatsapp", "instagram",
+                         "facebook", "tiktok", "flyer", "campaign", "brand", "increase sales", "improve sales",
+                         "grow sales", "boost sales", "more sales", "increase revenue", "grow my business",
+                         "grow the business", "attract", "customers", "customer", "loyalty", "pricing strategy",
+                         "bundle", "upsell", "cross-sell", "competitor", "advice", "tips", "ideas", "strategy",
+                         "how can i sell", "how do i sell", "how to sell")),
+    ("FORECAST", ("forecast", "predict", "projection", "project ", "next month", "next 30", "next 90",
+                  "next quarter", "future demand", "expected sales", "will sell", "going to sell", "estimate demand")),
+    ("DATASETS", ("uploaded", "upload", "my file", "the file", "spreadsheet", "excel", "csv", "sheet i sent",
+                  "dataset")),
     ("SEASONAL_PURCHASE", ("season", "stock up", "buying plan", "upcoming", "what to order", "what should i stock", "what to buy")),
     ("SUPPLIER_REVIEW", ("supplier", "send near-expiry", "distributor", "vendor", "short-dated")),
     ("WEEKLY_REPORT", ("week", "weekly", "activity")),
@@ -70,9 +91,17 @@ _INTENT_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
+def forecast_horizon_for(question: str) -> int:
+    """30 days unless the question asks for a longer view (90 days / three months / a quarter)."""
+    q = question.lower()
+    return 90 if re.search(r"\b(90 days|three months|3 months|quarter|next 90)\b", q) else 30
+
+
 def detect_intent(question: str) -> str:
     """Deterministic keyword intent classifier (no AI)."""
-    q = re.sub(r"\s+", " ", question.lower())
+    q = question.lower()
+    q = re.sub(r"(?<=[a-z])[\[\]{}()<>|\\/*_^~`]+(?=[a-z])", "", q)  # typos like "ex[piry" -> "expiry"
+    q = re.sub(r"\s+", " ", q)
     scores: dict[str, int] = defaultdict(int)
     for intent, words in _INTENT_KEYWORDS:
         for w in words:
@@ -112,6 +141,7 @@ async def build_context(
     period_days: int = 30,
     intent: str = "GENERAL",
     limit: int | None = None,
+    forecast_horizon: int = 30,
 ) -> dict[str, Any]:
     sections = frozenset(sections or ALL_SECTIONS)
     limit = limit or settings.AI_CONTEXT_LIST_LIMIT
@@ -266,6 +296,18 @@ async def build_context(
                 for a, name in rows
             ],
         }
+
+    if "forecast" in sections:
+        from app.services.forecast_service import forecast
+
+        ctx["forecast"] = await forecast(db, company_id, horizon_days=forecast_horizon, limit=limit)
+        if not ctx["forecast"]["products"]:
+            notes.append("Not enough sales history to forecast demand.")
+
+    if "datasets" in sections:
+        from app.services.ai_dataset_service import context_datasets
+
+        ctx["datasets"] = await context_datasets(db, company_id)
 
     ctx["data_quality"] = {"notes": notes}
     return ctx

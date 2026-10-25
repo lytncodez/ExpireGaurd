@@ -18,8 +18,13 @@ def normalize_phone(value: str | None) -> str | None:
         return None
     if cleaned.startswith("00"):
         cleaned = "+" + cleaned[2:]
+    elif cleaned.startswith("0") and cleaned.isdigit() and 9 <= len(cleaned) <= 11:
+        # Local format (e.g. Ghana 0241234567): add the pharmacy's default country code.
+        from app.core.config import settings
+
+        cleaned = settings.DEFAULT_PHONE_COUNTRY_CODE + cleaned[1:]
     if not _PHONE_RE.match(cleaned):
-        raise ValueError("Phone number must be in international format, e.g. +254712345678")
+        raise ValueError("Enter a valid phone number, e.g. 0241234567 or +233241234567")
     return cleaned
 
 
