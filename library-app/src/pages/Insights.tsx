@@ -172,7 +172,7 @@ export default function Insights() {
       setActiveConvId(convId);
     }
     const target = convId;
-    addLocalMessages(target, { id: `local-file-${Date.now()}`, role: 'user', content: `📎 Shared a file: **${file.name}**`, timestamp: nowLabel() });
+    addLocalMessages(target, { id: `local-file-${Date.now()}`, role: 'user', content: `📎 Shared a file: ${file.name}`, timestamp: nowLabel() });
     setUploadingFile(true);
     setErrorMessage(null);
     try {
@@ -192,7 +192,16 @@ export default function Insights() {
         answerMode: 'data',
       });
     } catch (err) {
-      setErrorMessage(`Could not read ${file.name}: ${errorMessage(err)}`);
+      const reason =
+        err instanceof ApiError && err.status >= 500
+          ? 'The server hit an error while saving the file. If you just updated ExpireGuard, run "alembic upgrade head" in the backend folder and restart the backend.'
+          : errorMessage(err);
+      addLocalMessages(target, {
+        id: `local-file-error-${Date.now()}`,
+        role: 'assistant',
+        content: `I couldn't read **${file.name}**. ${reason}\n\nI can read Excel (.xlsx) or CSV files with a header row, for example: Product, Batch, Expiry Date, Quantity, or Date, Product, Quantity Sold.`,
+        timestamp: nowLabel(),
+      });
     } finally {
       setUploadingFile(false);
     }
