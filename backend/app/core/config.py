@@ -80,6 +80,9 @@ class Settings(BaseSettings):
 
     # --- Email (SMTP: Gmail, Brevo, SendGrid, Outlook ...) ---
     EMAIL_MODE: Literal["off", "mock", "live"] = "mock"
+    # smtp (Gmail etc.) or brevo (HTTPS API: works on hosts that block SMTP ports, e.g. Render free)
+    EMAIL_PROVIDER: Literal["smtp", "brevo"] = "smtp"
+    BREVO_API_KEY: SecretStr | None = None
     EMAIL_MIN_SEVERITY: Severity = "CRITICAL"
     SMTP_HOST: str | None = None
     SMTP_PORT: int = 587
@@ -156,8 +159,11 @@ class Settings(BaseSettings):
         if self.APP_ENV == "production":
             if len(secret) < 32 or secret.startswith("change-me"):
                 raise ValueError("JWT_SECRET_KEY must be a strong random value (>=32 chars) in production")
-        if self.EMAIL_MODE == "live" and not (self.SMTP_HOST and self.EMAIL_FROM):
-            raise ValueError("EMAIL_MODE=live requires SMTP_HOST and EMAIL_FROM (plus SMTP_USERNAME/SMTP_PASSWORD)")
+        if self.EMAIL_MODE == "live":
+            if self.EMAIL_PROVIDER == "brevo" and not (secret_value(self.BREVO_API_KEY) and self.EMAIL_FROM):
+                raise ValueError("EMAIL_PROVIDER=brevo requires BREVO_API_KEY and EMAIL_FROM")
+            if self.EMAIL_PROVIDER == "smtp" and not (self.SMTP_HOST and self.EMAIL_FROM):
+                raise ValueError("EMAIL_MODE=live requires SMTP_HOST and EMAIL_FROM (plus SMTP_USERNAME/SMTP_PASSWORD)")
         if self.SMS_MODE == "live":
             if self.SMS_PROVIDER == "africastalking" and not (self.AT_USERNAME and secret_value(self.AT_API_KEY)):
                 raise ValueError("SMS_MODE=live with africastalking requires AT_USERNAME and AT_API_KEY")

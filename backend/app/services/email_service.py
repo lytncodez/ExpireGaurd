@@ -116,6 +116,47 @@ class SMTPEmailProvider(EmailProvider):
         return EmailResult(True, self.name, message_id=msg["Message-ID"])
 
 
+class BrevoEmailProvider(EmailProvider):
+    """Brevo (ex-Sendinblue) transactional email over HTTPS. No SMTP ports needed."""
+
+    name = "brevo"
+    URL = "https://api.brevo.com/v3/smtp/email"
+
+    def __init__(self, api_key: str, sender: str, sender_name: str, timeout: float) -> None:
+        self._api_key = api_key
+        self.sender = sender
+        self.sender_name = sender_name
+        self.timeout = timeout
+
+    async def send(self, to: str, subject: str, body: str) -> EmailResult:
+        import httpx
+
+        payload = {
+            "sender": {"name": self.sender_name, "email": self.sender},
+            "to": [{"email": to}],
+            "subject": subject,
+            "textContent": body,
+        }
+        headers = {"api-key": self._api_key, "accept": "application/json", "content-type": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(self.URL, json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            return EmailResult(False, self.name, error=f"{type(exc).__name__}: {str(exc)[:300]}")
+        if resp.status_code in (200, 201, 202):
+            try:
+                message_id = resp.json().get("messageId")
+            except ValueError:
+                message_id = None
+            return EmailResult(True, self.name, message_id=message_id)
+        hint = ""
+        if resp.status_code == 401:
+            hint = " Check BREVO_API_KEY."
+        elif resp.status_code == 400 and "sender" in resp.text.lower():
+            hint = " Verify EMAIL_FROM as a sender in Brevo (Senders, Domains & Dedicated IPs)."
+        return EmailResult(False, self.name, error=f"HTTP {resp.status_code}: {resp.text[:300]}{hint}")
+
+
 def email_enabled() -> bool:
     return settings.EMAIL_MODE != "off"
 
@@ -124,6 +165,13 @@ def email_enabled() -> bool:
 def get_email_provider() -> EmailProvider:
     if settings.EMAIL_MODE != "live":
         return MockEmailProvider()
+    if settings.EMAIL_PROVIDER == "brevo":
+        return BrevoEmailProvider(
+            api_key=secret_value(settings.BREVO_API_KEY) or "",
+            sender=settings.EMAIL_FROM or "",
+            sender_name=settings.EMAIL_FROM_NAME,
+            timeout=settings.SMTP_TIMEOUT_SECONDS,
+        )
     return SMTPEmailProvider(
         host=settings.SMTP_HOST or "",
         port=settings.SMTP_PORT,
