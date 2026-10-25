@@ -292,8 +292,25 @@ def validate_dataframe(df: pd.DataFrame, *, dayfirst: bool = True) -> ParseResul
 # --------------------------------------------------------------------------- readers
 
 
+def _pick_delimiter(text: str) -> str:
+    """Sniff the delimiter; fall back to the common one that splits the header into the most columns."""
+    sample = "\n".join(text.splitlines()[:50])
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except csv.Error:
+        header = next((line for line in text.splitlines() if line.strip()), "")
+        return max([",", ";", "\t", "|"], key=lambda d: header.count(d))
+
+
 def read_csv(content: bytes) -> pd.DataFrame:
-    for encoding in ("utf-8-sig", "latin-1"):
+    if content[:2] == b"PK" or content[:4] == b"\xd0\xcf\x11\xe0":
+        # An Excel workbook saved or renamed with a .csv extension
+        if content[:2] == b"PK":
+            from app.services.excel_service import read_excel
+
+            return read_excel(content)
+        raise ImportFileError("This is an old Excel (.xls) file. Open it in Excel and use Save As > .xlsx or .csv.")
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
         try:
             text = content.decode(encoding)
             break
@@ -301,12 +318,15 @@ def read_csv(content: bytes) -> pd.DataFrame:
             continue
     else:  # pragma: no cover - latin-1 always decodes
         raise ImportFileError("Could not decode the CSV file")
+    if not text.strip():
+        raise ImportFileError("The CSV file is empty")
     try:
         df = pd.read_csv(
-            io.StringIO(text), dtype=str, keep_default_na=False, sep=None, engine="python", skip_blank_lines=False
+            io.StringIO(text), dtype=str, keep_default_na=False, sep=_pick_delimiter(text), engine="python",
+            skip_blank_lines=False,
         )
     except (pd.errors.ParserError, pd.errors.EmptyDataError, csv.Error) as exc:
-        raise ImportFileError(f"Could not parse CSV: {exc}") from exc
+        raise ImportFileError(f"Could not read the CSV file: {exc}") from exc
     if df.empty and not len(df.columns):
         raise ImportFileError("The CSV file is empty")
     return df
