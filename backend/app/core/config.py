@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Severity = Literal["INFO", "WARNING", "CRITICAL", "URGENT"]
@@ -127,6 +127,24 @@ class Settings(BaseSettings):
     ALERT_JOB_INTERVAL_MINUTES: int = 30
     CLEANUP_JOB_HOUR: int = 3
     ALERT_RETENTION_DAYS: int = 180
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _asyncpg_url(cls, url: str) -> str:
+        """Accept the plain URLs hosts give out (Neon, Render, Supabase) and make them work with asyncpg."""
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        for prefix in ("postgres://", "postgresql://", "postgresql+psycopg2://", "postgresql+psycopg://"):
+            if url.startswith(prefix):
+                url = "postgresql+asyncpg://" + url[len(prefix):]
+                break
+        parts = urlsplit(url)
+        query = dict(parse_qsl(parts.query))
+        sslmode = query.pop("sslmode", None)
+        query.pop("channel_binding", None)  # libpq-only option
+        if sslmode and sslmode != "disable" and "ssl" not in query:
+            query["ssl"] = "require"
+        return urlunsplit(parts._replace(query=urlencode(query)))
 
     @model_validator(mode="after")
     def _validate(self) -> "Settings":
